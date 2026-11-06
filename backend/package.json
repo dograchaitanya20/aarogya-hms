@@ -1,0 +1,37 @@
+{
+  "name": "aarogya-hms-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Aarogya HMS",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "migrate": "node db/migrate.js",
+    "seed": "node db/seed.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo:race": "node scripts/demo-race.js",
+    "lint": "node scripts/lint.js"
+  },
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.0.0",
+    "vitest": "^3.0.4"
+  }
+}
