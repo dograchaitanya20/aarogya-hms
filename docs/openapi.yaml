@@ -1,0 +1,188 @@
+openapi: 3.0.3
+info:
+  title: Aarogya HMS API
+  version: 1.0.0
+  description: Hospital Management System REST API with server-side RBAC, strict
+    audit logging, and synthetic data only.
+servers:
+  - url: http://localhost:5000/api/v1
+    description: Local Development Server
+components:
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: SLOT_TAKEN
+            message:
+              type: string
+              example: The requested slot is already booked
+            details:
+              type: object
+            requestId:
+              type: string
+              example: b18ca0e6-59b3-4674-a69c-29da229a1740
+          required:
+            - code
+            - message
+            - details
+            - requestId
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          example: admin@aarogya.local
+        password:
+          type: string
+          example: Password123!
+      required:
+        - email
+        - password
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      tags:
+        - System
+      responses:
+        "200":
+          description: Service is healthy and database is connected
+  /auth/login:
+    post:
+      summary: Authenticate user and set session cookie
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authentication successful
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /auth/logout:
+    post:
+      summary: Log out user and clear session cookie
+      tags:
+        - Authentication
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Logged out successfully
+  /auth/me:
+    get:
+      summary: Get authenticated user details
+      tags:
+        - Authentication
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: User profile retrieved
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /directory/departments:
+    get:
+      summary: List departments (Admin, Clinician, Front Desk)
+      tags:
+        - Directory
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: List of departments
+    post:
+      summary: Create department (Admin only)
+      tags:
+        - Directory
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Department created
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /patients:
+    get:
+      summary: List patients with pagination and search
+      tags:
+        - Patients
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Paginated list of patients
+    post:
+      summary: Register new synthetic patient (Front Desk only)
+      tags:
+        - Patients
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "201":
+          description: Patient created
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /clinical-notes/patients/{patientId}:
+    get:
+      summary: Get clinical notes for a patient (Treating Clinician only)
+      tags:
+        - Clinical
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Clinical notes
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /audit/logs:
+    get:
+      summary: View append-only audit trail (Admin only)
+      tags:
+        - Audit
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Audit logs
+        "403":
+          $ref: "#/components/responses/Forbidden"

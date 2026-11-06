@@ -13,6 +13,7 @@
     "seed": "npm --workspace=backend run seed",
     "test": "npm --workspace=backend run test",
     "demo:race": "npm --workspace=backend run demo:race",
+    "docs:openapi": "npm --workspace=backend run docs:openapi",
     "lint": "npm --workspace=backend run lint"
   },
   "engines": {

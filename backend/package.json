@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "demo:race": "node scripts/demo-race.js",
+    "docs:openapi": "node scripts/docs-openapi.js",
     "lint": "node scripts/lint.js"
   },
   "dependencies": {

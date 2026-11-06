@@ -1,58 +1,30 @@
 # Aarogya HMS — Hospital Management System
 
-> **DEMO SYSTEM NOTICE**: This system contains strictly **SYNTHETIC DATA ONLY**. No real patient data exists in this repository or database.
+[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+![Node 20](https://img.shields.io/badge/node-20.x-green.svg)
+![PostgreSQL 16](https://img.shields.io/badge/postgresql-16-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-purple.svg)
 
-Aarogya HMS is an enterprise-grade Hospital Management System designed for high integrity, clinical explainability, and server-side role-based access control.
+> **DEMO SYSTEM NOTICE**: This repository and database contain strictly **SYNTHETIC DATA ONLY**. No real patient or clinician data is used anywhere in this system.
 
----
-
-## Architecture Overview
-
-A modular monolith structured strictly by layered separation of concerns:
-```
-Routes  ──>  Controllers  ──>  Services (Business Logic)  ──>  Repositories (Plain SQL)
-```
-- **No SQL in controllers or routes**.
-- **Server-side RBAC on every protected route** (`admin`, `clinician`, `front_desk`).
-- **PostgreSQL `btree_gist` Exclusion Constraints** for physical double-booking prevention (`SQLSTATE 23P01` &rarr; 409 `SLOT_TAKEN`).
-- **Append-only Audit Log** enforced by PostgreSQL DB trigger rejecting any `UPDATE` or `DELETE`.
-- **All monetary calculations** stored as integer paise (`BIGINT`).
-- **Clinician-entered notes only**: Zero automated diagnosis or algorithmic medical decision making.
+Aarogya HMS is an enterprise-grade Hospital Management System designed for high clinical explainability, zero race-condition tolerance, server-side role-based access control (RBAC), and append-only auditing.
 
 ---
 
-## Tech Stack (Backend)
+## Reviewer Quick Start
 
-- **Runtime**: Node.js 20 (ES Modules)
-- **Framework**: Express.js with Helmet, CORS, and Express-Rate-Limit
-- **Database**: PostgreSQL 16 via native `pg` client
-- **Validation**: Zod (standardized 422 error outputs)
-- **Authentication**: bcrypt password hashing + JWT in `httpOnly` `SameSite=lax` cookies
-- **Logging**: Pino structured logging with request ID correlation
-- **Documentation**: OpenAPI 3 + Swagger UI served at `/api/docs`
-- **Testing**: Vitest + Supertest testing against a real PostgreSQL test database
+Follow these exact Windows PowerShell commands from initial repository clone to running the system and running all verified test suites:
 
----
-
-## Prerequisites
-
-- **Node.js**: v20+ (`node -v`)
-- **Docker & Docker Compose**: Docker Desktop with Linux containers enabled
-
----
-
-## Quickstart Setup (Windows PowerShell / Bash)
-
-### 1. Clone & Configure Environment
+### 1. Copy Environment File
 ```powershell
-cp .env.example .env
+Copy-Item .env.example .env
 ```
 
-### 2. Start PostgreSQL 16
+### 2. Start PostgreSQL 16 via Docker
 ```powershell
 docker compose up -d
 ```
-*Healthcheck verifies PostgreSQL is running on port `5432` with databases `aarogya_hms` and `aarogya_hms_test`.*
+*(Starts PostgreSQL 16 container with healthchecks and creates both `aarogya_hms` and `aarogya_hms_test` databases on port 5432).*
 
 ### 3. Install Dependencies
 ```powershell
@@ -65,12 +37,12 @@ npm run migrate
 npm run seed
 ```
 
-### 5. Run Test Suite
+### 5. Run All Real Database Automated Tests
 ```powershell
 npm test
 ```
 
-### 6. Verify Race-Condition Double-Booking Prevention
+### 6. Run the Live Race Condition Double-Booking Demo
 ```powershell
 npm run demo:race
 ```
@@ -79,13 +51,23 @@ npm run demo:race
 ```powershell
 npm run dev
 ```
-- Server API: [http://localhost:5000](http://localhost:5000)
-- Health Check: [http://localhost:5000/api/v1/health](http://localhost:5000/api/v1/health)
-- OpenAPI Docs: [http://localhost:5000/api/docs](http://localhost:5000/api/docs)
 
 ---
 
-## Demo Credentials (Synthetic Users)
+## Key Reviewer Documentation & Artifacts
+
+| Document | Location | Purpose |
+| :--- | :--- | :--- |
+| **Interactive API Docs** | [http://localhost:5000/api/docs](http://localhost:5000/api/docs) | Swagger UI for live endpoint exploration |
+| **Committed Static OpenAPI Spec** | [`docs/openapi.yaml`](docs/openapi.yaml) | Validated OpenAPI 3.0 specification |
+| **Entity Relationship Diagram** | [`docs/ER.md`](docs/ER.md) | Mermaid ER diagram covering all 18 tables and constraints |
+| **Technical Architecture Report** | [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md) | Complete architectural decisions, security, and integrity report |
+| **Test Evidence & Logs** | [`docs/TEST_EVIDENCE.md`](docs/TEST_EVIDENCE.md) | Raw terminal logs, test matrices, and proof of constraints |
+| **Module Walkthrough Guide** | [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) | Module-by-module breakdown and reviewer interview Q&As |
+
+---
+
+## Demo Credentials (Dummy Passwords Only)
 
 All demo accounts use the standard dummy password: `Password123!`
 
@@ -94,10 +76,26 @@ All demo accounts use the standard dummy password: `Password123!`
 | **Admin** | `admin@aarogya.local` | System Administrator | Directory management, audit log viewer, encounter metadata |
 | **Front Desk** | `frontdesk1@aarogya.local` | Receptionist | Patient demographics (CRUD), appointments, billing & payments |
 | **Front Desk** | `frontdesk2@aarogya.local` | Desk Coordinator | Patient demographics (CRUD), appointments, billing & payments |
-| **Clinician** | `dr.sharma@aarogya.local` | Interventional Cardiology | Own appointments, patients treated, clinical notes for those patients |
-| **Clinician** | `dr.verma@aarogya.local` | Orthopedics | Own appointments, patients treated, clinical notes for those patients |
-| **Clinician** | `dr.iyer@aarogya.local` | Pediatrics | Own appointments, patients treated, clinical notes for those patients |
-| **Clinician** | `dr.singh@aarogya.local` | Ophthalmology | Own appointments, patients treated, clinical notes for those patients |
+| **Front Desk** | `frontdesk3@aarogya.local` | Patient Services | Patient demographics (CRUD), appointments, billing & payments |
+| **Clinician** | `dr.sharma@aarogya.local` | Cardiology | Own appointments, treated patients, clinical notes for those patients |
+| **Clinician** | `dr.verma@aarogya.local` | Orthopedics | Own appointments, treated patients, clinical notes for those patients |
+| **Clinician** | `dr.iyer@aarogya.local` | Pediatrics | Own appointments, treated patients, clinical notes for those patients |
+| **Clinician** | `dr.singh@aarogya.local` | Ophthalmology | Own appointments, treated patients, clinical notes for those patients |
+
+---
+
+## Architecture Overview
+
+A modular monolith structured strictly by layered separation of concerns:
+```
+Routes  ──>  Controllers  ──>  Services (Business Logic)  ──>  Repositories (Plain SQL)
+```
+- **No SQL in controllers or routes**.
+- **Server-side RBAC on every protected route** (`admin`, `clinician`, `front_desk`).
+- **PostgreSQL `btree_gist` Exclusion Constraints** for physical double-booking prevention (`SQLSTATE 23P01` &rarr; 409 `SLOT_TAKEN`).
+- **Append-only Audit Log** enforced by PostgreSQL DB trigger rejecting any `UPDATE` or `DELETE` with `SQLSTATE 55000`.
+- **All monetary calculations** stored as integer paise (`BIGINT`).
+- **Clinician-entered notes only**: Zero automated diagnosis or algorithmic medical decision making.
 
 ---
 
@@ -117,21 +115,6 @@ All demo accounts use the standard dummy password: `Password123!`
 
 ---
 
-## Environment Variables
-
-| Variable | Default Value | Description |
-| :--- | :--- | :--- |
-| `NODE_ENV` | `development` | Runtime environment (`development`, `test`, `production`) |
-| `PORT` | `5000` | Port for Express HTTP server |
-| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/aarogya_hms` | Development PostgreSQL connection string |
-| `TEST_DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/aarogya_hms_test` | Isolated test database connection string |
-| `JWT_SECRET` | *(string)* | Signing secret for JSON Web Tokens |
-| `JWT_EXPIRES_IN` | `8h` | Session token lifetime |
-| `COOKIE_SECRET` | *(string)* | Cookie signing secret |
-| `LOG_LEVEL` | `info` | Pino log level (`info`, `debug`, `warn`, `error`) |
-
----
-
 ## Available NPM Scripts
 
 - `npm run dev`: Start backend with hot reload (`node --watch`).
@@ -140,10 +123,11 @@ All demo accounts use the standard dummy password: `Password123!`
 - `npm run seed`: Run idempotent synthetic data seed.
 - `npm test`: Run full Vitest suite against real PostgreSQL test database.
 - `npm run demo:race`: Run the live race condition double-booking demonstration script.
+- `npm run docs:openapi`: Validate OpenAPI specification and sync `docs/openapi.yaml`.
 - `npm run lint`: Perform clean recursive syntax verification on all JS files.
 
 ---
 
 ## Known Limitations
 
-- **Phase 1 Scope**: Phase 1 includes backend foundation, database schema, migrations, seed, auth, RBAC matrix, and audit logging. Appointment lifecycle workflows, idempotency middleware, billing reconciliation, and frontend UI are scheduled for subsequent phases.
+- **Phase 1 Scope**: Phase 1 includes backend foundation, database schema, migrations, seed, auth, RBAC matrix, and audit logging. Interactive appointment booking workflows, front-desk UI, and clinician console are scheduled for subsequent phases.
