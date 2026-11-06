@@ -1,32 +1,31 @@
 openapi: 3.0.3
 info:
   title: Aarogya HMS API
-  version: 1.0.0
+  version: 1.1.0
   description: Hospital Management System REST API with server-side RBAC, strict
-    audit logging, and synthetic data only.
+    audit logging, btree_gist exclusion constraints against doctor/patient
+    double-booking, and synthetic data only.
 servers:
   - url: http://localhost:5000/api/v1
     description: Local Development Server
 components:
-  responses:
-    Unauthorized:
-      description: Unauthorized
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    Forbidden:
-      description: Forbidden
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    ValidationError:
-      description: Validation error
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: aarogya_token
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Unique key to ensure idempotent creation and prevent duplicate processing
   schemas:
     ErrorResponse:
       type: object
@@ -50,19 +49,42 @@ components:
             - message
             - details
             - requestId
-    LoginRequest:
+    Appointment:
       type: object
       properties:
-        email:
+        id:
           type: string
-          format: email
-          example: admin@aarogya.local
-        password:
+          format: uuid
+        appointmentNumber:
           type: string
-          example: Password123!
-      required:
-        - email
-        - password
+          example: APT-2026-00001
+        patientId:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        departmentId:
+          type: string
+          format: uuid
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+            - scheduled
+            - checked_in
+            - in_consultation
+            - completed
+            - cancelled
+            - no_show
+        version:
+          type: integer
+          example: 1
 paths:
   /health:
     get:
@@ -77,112 +99,117 @@ paths:
       summary: Authenticate user and set session cookie
       tags:
         - Authentication
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoginRequest"
       responses:
         "200":
           description: Authentication successful
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          description: Invalid credentials
+  /slots:
+    get:
+      summary: Search available slots aligned to schedule in hospital timezone
+      tags:
+        - Slots
+      parameters:
+        - name: doctorId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: departmentId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            example: 2027-01-11
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            example: 2027-01-12
+      responses:
+        "200":
+          description: Available slots computed in Asia/Kolkata
         "422":
-          $ref: "#/components/responses/ValidationError"
-  /auth/logout:
+          description: Range exceeds 14 days or invalid format
+  /appointments:
     post:
-      summary: Log out user and clear session cookie
+      summary: Book a new appointment (Front Desk only; requires Idempotency-Key)
       tags:
-        - Authentication
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Logged out successfully
-  /auth/me:
-    get:
-      summary: Get authenticated user details
-      tags:
-        - Authentication
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      responses:
-        "200":
-          description: User profile retrieved
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-  /directory/departments:
-    get:
-      summary: List departments (Admin, Clinician, Front Desk)
-      tags:
-        - Directory
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      responses:
-        "200":
-          description: List of departments
-    post:
-      summary: Create department (Admin only)
-      tags:
-        - Directory
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+        - Appointments
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "201":
-          description: Department created
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /patients:
+          description: Appointment booked
+        "409":
+          description: SLOT_TAKEN or PATIENT_DOUBLE_BOOKED
+        "422":
+          description: VALIDATION_ERROR or IDEMPOTENCY_KEY_REUSED
     get:
-      summary: List patients with pagination and search
+      summary: List appointments with filters and pagination
       tags:
-        - Patients
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+        - Appointments
       responses:
         "200":
-          description: Paginated list of patients
-    post:
-      summary: Register new synthetic patient (Front Desk only)
+          description: Paginated list of appointments
+  /appointments/{id}/reschedule:
+    patch:
+      summary: Reschedule appointment with optimistic locking version check
+      tags:
+        - Appointments
+      responses:
+        "200":
+          description: Reschedule successful
+        "409":
+          description: STALE_VERSION or SLOT_TAKEN
+  /appointments/{id}/status:
+    patch:
+      summary: Transition appointment status (State Machine enforcement)
+      tags:
+        - Appointments
+      responses:
+        "200":
+          description: Status updated
+        "409":
+          description: INVALID_TRANSITION
+  /patients/{id}:
+    put:
+      summary: Update patient demographics (Front Desk only; audited before/after)
       tags:
         - Patients
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+      responses:
+        "200":
+          description: Patient updated
+        "403":
+          description: Forbidden
+  /directory/schedules:
+    post:
+      summary: Create doctor schedule rule with overlap checks (Admin only)
+      tags:
+        - Directory
       responses:
         "201":
-          description: Patient created
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /clinical-notes/patients/{patientId}:
+          description: Schedule created
+        "409":
+          description: Overlapping schedule conflict
+  /directory/staff:
     get:
-      summary: Get clinical notes for a patient (Treating Clinician only)
+      summary: List staff users without password hashes (Admin only)
       tags:
-        - Clinical
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+        - Directory
       responses:
         "200":
-          description: Clinical notes
-        "403":
-          $ref: "#/components/responses/Forbidden"
-  /audit/logs:
-    get:
-      summary: View append-only audit trail (Admin only)
+          description: Staff list
+    post:
+      summary: Create staff user with bcrypt hashing (Admin only)
       tags:
-        - Audit
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
+        - Directory
       responses:
-        "200":
-          description: Audit logs
-        "403":
-          $ref: "#/components/responses/Forbidden"
+        "201":
+          description: Staff created

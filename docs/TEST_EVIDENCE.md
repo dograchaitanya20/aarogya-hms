@@ -6,10 +6,13 @@ This document provides verified test evidence executed against a real PostgreSQL
 
 | Test File | Test Suite | Tests Run | Passed | Failed |
 | :--- | :--- | :---: | :---: | :---: |
-| [`tests/db.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/db.test.js) | Database Constraints & Triggers | 6 | 6 | 0 |
+| [`tests/timezone.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/timezone.test.js) | Hospital Timezone (`Asia/Kolkata`) Engine | 5 | 5 | 0 |
+| [`tests/db.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/db.test.js) | Database Constraints & Append-Only Triggers | 6 | 6 | 0 |
+| [`tests/security-isolation.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/security-isolation.test.js) | DB Isolation Proof & Security Hardening | 5 | 5 | 0 |
 | [`tests/auth.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/auth.test.js) | Health & Authentication Endpoints | 10 | 10 | 0 |
-| [`tests/rbac.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/rbac.test.js) | RBAC Matrix & Audit Enforcement | 19 | 19 | 0 |
-| **Total** | **Full Backend Test Suite** | **35** | **35** | **0** |
+| [`tests/rbac.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/rbac.test.js) | RBAC Matrix & Audit Log Enforcement | 19 | 19 | 0 |
+| [`tests/phase2.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/phase2.test.js) | Appointments, Slots, Idempotency & Concurrency | 13 | 13 | 0 |
+| **Total** | **Full Backend Test Suite** | **58** | **58** | **0** |
 
 ---
 
@@ -32,21 +35,28 @@ npm test
 
  RUN  v3.2.7 C:/Users/ASUS/Downloads/aarogya-hms/backend
 
- ✓ tests/db.test.js (6 tests) 182ms
- ✓ tests/auth.test.js (10 tests) 414ms
- ✓ tests/rbac.test.js (19 tests) 592ms
+[Test Setup] Ensuring test database is migrated and seeded...
+[Migrate] Database is already up to date. No new migrations.
+[Seed] Starting idempotent synthetic data seed...
+[Seed] Seeding 60 appointments...
+[Seed] Database seed completed successfully!
+[Test Setup] Test database ready.
+ ✓ tests/timezone.test.js (5 tests) 49ms
+ ✓ tests/db.test.js (6 tests) 239ms
+ ✓ tests/security-isolation.test.js (5 tests) 127ms
+ ✓ tests/auth.test.js (10 tests) 455ms
+ ✓ tests/rbac.test.js (19 tests) 638ms
+ ✓ tests/phase2.test.js (13 tests) 849ms
 
- Test Files  3 passed (3)
-      Tests  35 passed (35)
-   Start at  23:46:09
-   Duration  1.90s (transform 242ms, setup 0ms, collect 1.88s, tests 1.19s, environment 1ms, prepare 559ms)
+ Test Files  6 passed (6)
+      Tests  58 passed (58)
+   Start at  00:12:42
+   Duration  3.16s (transform 372ms, setup 0ms, collect 4.64s, tests 2.36s, environment 2ms, prepare 1.23s)
 ```
 
 ---
 
-## 2. Double-Booking Exclusion Constraint Evidence
-
-PostgreSQL `btree_gist` exclusion constraint prevents concurrent double-booking at the storage engine level.
+## 2. Real HTTP Concurrent Race Demo Output
 
 **Command**:
 ```bash
@@ -62,57 +72,45 @@ npm run demo:race
 > aarogya-hms-backend@1.0.0 demo:race
 > node scripts/demo-race.js
 
-=== Aarogya HMS: Double-Booking Prevention Demo (PostgreSQL btree_gist) ===
+=== Aarogya HMS: Concurrent HTTP Race Demo (PostgreSQL btree_gist) ===
 
-Doctor:    Dr. Rajesh Sharma (ID: 4b2c4729-290a-4966-84af-9f9e6744c794)
-Slot Time: 2026-12-21T17:30:00.000Z -> 2026-12-21T17:45:00.000Z
-Patient 1: Nikhil Malhotra (MRN-2026-0013)
-Patient 2: Pooja Narang (MRN-2026-0014)
+[Server] Live test server listening on http://localhost:50251
+[Auth] Authenticated as front-desk successfully.
 
---- Step 1: Booking Appointment 1 for Patient 1 ---
-[SUCCESS] Appointment 1 booked: APT-RACE-001 (ID: bdac6c07-1305-4c9d-903b-4df9c935d087)
+--- SCENARIO 1: 20 Simultaneous HTTP Bookings for the Same Doctor+Slot ---
+Doctor: Dr. Rajesh Sharma (e01db3c1-8b84-4914-98bb-128b73adb60c)
+Slot:   2027-01-11T04:30:00.000Z -> 2027-01-11T04:45:00.000Z (10:00 - 10:15 IST)
+Firing 20 simultaneous HTTP POST requests with 20 distinct patients...
 
---- Step 2: Attempting to Book Overlapping Slot for Patient 2 ---
-[BLOCKED] Database rejected double-booking as expected!
-  SQLSTATE:   23P01
-  Constraint: uq_doctor_slot_no_overlap
-  Detail:     Key (doctor_id, tstzrange(starts_at, ends_at))=(4b2c4729-290a-4966-84af-9f9e6744c794, ["2026-12-21 17:30:00+00","2026-12-21 17:45:00+00")) conflicts with existing key (doctor_id, tstzrange(starts_at, ends_at))=(4b2c4729-290a-4966-84af-9f9e6744c794, ["2026-12-21 17:30:00+00","2026-12-21 17:45:00+00"])).
-  Message:    conflicting key value violates exclusion constraint "uq_doctor_slot_no_overlap"
+Scenario 1 Status Code Breakdown:
+  HTTP 201: 1
+  HTTP 409: 19
+[PASSED] Winner Appointment ID: 5490d327-9d8c-48d4-9e5b-8a92d37d75c6 (APT-468750-819)
 
-[DEMO PASSED] Exclusion constraint "uq_doctor_slot_no_overlap" successfully enforced!
+--- SCENARIO 2: 10 Concurrent Requests with the SAME Idempotency-Key ---
+Key:  race-sc2-shared-key-1793990453402
+Firing 10 concurrent HTTP POST requests with exact same Idempotency-Key...
+Appointments in Database for slot: 1
+[PASSED] Exactly 1 appointment row created; duplicate requests handled idempotently.
+
+--- SCENARIO 3: 5 Concurrent Reschedules into the Same Target Slot ---
+Created 5 appointments. Now attempting concurrent reschedule to: 2027-01-11T08:30:00.000Z
+Scenario 3 Status Code Breakdown:
+  HTTP 200: 1
+  HTTP 409: 4
+[PASSED] Exactly 1 reschedule succeeded into target slot; 4 rejected with 409.
+
+[Cleanup] Demo test data cleaned up successfully.
+
+=== ALL CONCURRENCY & RACE SCENARIOS PASSED WITH RIGOROUS ASSERTIONS ===
 ```
 
 ---
 
-## 3. Append-Only Audit Trigger Evidence
+## 3. Database Isolation Verification
 
-**Test Case**: `UPDATE` and `DELETE` queries executed against `audit_log` are trapped by database trigger `trg_audit_log_append_only`.
-
-**Result**:
-- `UPDATE audit_log SET action = 'MODIFIED_ACTION' WHERE id = ...` &rarr; Rejection with SQLSTATE `55000` (`audit_log is append-only: UPDATE and DELETE operations are forbidden`).
-- `DELETE FROM audit_log WHERE id = ...` &rarr; Rejection with SQLSTATE `55000` (`audit_log is append-only: UPDATE and DELETE operations are forbidden`).
-
----
-
-## 4. RBAC Matrix Verification Evidence
-
-| Resource | Action | Role Tested | Expected | Actual Result | Audit Action Written |
-| :--- | :--- | :--- | :---: | :---: | :--- |
-| **Directory** | Create Dept | Admin | 201 | 201 Created | `CREATE_DEPARTMENT` |
-| **Directory** | Create Dept | Clinician | 403 | 403 Forbidden | `PERMISSION_DENIED` |
-| **Directory** | Create Dept | Front Desk | 403 | 403 Forbidden | `PERMISSION_DENIED` |
-| **Directory** | List Depts | All Roles | 200 | 200 OK | - |
-| **Patients** | Create Patient | Front Desk | 201 | 201 Created | `CREATE_PATIENT` |
-| **Patients** | Create Patient | Admin | 403 | 403 Forbidden | `PERMISSION_DENIED` |
-| **Patients** | Create Patient | Clinician | 403 | 403 Forbidden | `PERMISSION_DENIED` |
-| **Patients** | List Patients | Front Desk | 200 | 200 OK | `READ_PATIENT_LIST` |
-| **Clinical Notes** | Read Notes | Treating Clinician | 200 | 200 OK | `READ_CLINICAL_NOTE` |
-| **Clinical Notes** | Read Notes | Untreated Clinician | 403 | 403 Forbidden | `PERMISSION_DENIED` |
-| **Clinical Notes** | Read Notes | Admin | 403 | 403 Forbidden | `PERMISSION_DENIED` |
-| **Clinical Notes** | Read Notes | Front Desk | 403 | 403 Forbidden | `PERMISSION_DENIED` |
-| **Billing** | List Invoices | Admin | 200 | 200 OK | - |
-| **Billing** | List Invoices | Front Desk | 200 | 200 OK | - |
-| **Billing** | List Invoices | Clinician | 403 | 403 Forbidden | `PERMISSION_DENIED` |
-| **Audit Logs** | View Logs | Admin | 200 | 200 OK | - |
-| **Audit Logs** | View Logs | Clinician | 403 | 403 Forbidden | `PERMISSION_DENIED` |
-| **Audit Logs** | View Logs | Front Desk | 403 | 403 Forbidden | `PERMISSION_DENIED` |
+**Evidence from `tests/security-isolation.test.js`**:
+- `SELECT current_database()` returns `aarogya_hms_test`.
+- Dev DB row counts before running test: 40 patients.
+- Row inserted into `aarogya_hms_test`: 1 row.
+- Dev DB row counts after test: 40 patients (0 mutations to dev DB).

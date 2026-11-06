@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Aarogya HMS API",
-    "version": "1.0.0",
-    "description": "Hospital Management System REST API with server-side RBAC, strict audit logging, and synthetic data only."
+    "version": "1.1.0",
+    "description": "Hospital Management System REST API with server-side RBAC, strict audit logging, btree_gist exclusion constraints against doctor/patient double-booking, and synthetic data only."
   },
   "servers": [
     {
@@ -24,6 +24,17 @@
         "bearerFormat": "JWT"
       }
     },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Unique key to ensure idempotent creation and prevent duplicate processing"
+      }
+    },
     "schemas": {
       "ErrorResponse": {
         "type": "object",
@@ -40,23 +51,21 @@
           }
         }
       },
-      "LoginRequest": {
-        "type": "object",
-        "properties": {
-          "email": { "type": "string", "format": "email", "example": "admin@aarogya.local" },
-          "password": { "type": "string", "example": "Password123!" }
-        },
-        "required": ["email", "password"]
-      },
-      "User": {
+      "Appointment": {
         "type": "object",
         "properties": {
           "id": { "type": "string", "format": "uuid" },
-          "email": { "type": "string", "format": "email" },
-          "fullName": { "type": "string" },
-          "role": { "type": "string", "enum": ["admin", "clinician", "front_desk"] },
-          "phone": { "type": "string" },
-          "doctorId": { "type": "string", "format": "uuid", "nullable": true }
+          "appointmentNumber": { "type": "string", "example": "APT-2026-00001" },
+          "patientId": { "type": "string", "format": "uuid" },
+          "doctorId": { "type": "string", "format": "uuid" },
+          "departmentId": { "type": "string", "format": "uuid" },
+          "startsAt": { "type": "string", "format": "date-time" },
+          "endsAt": { "type": "string", "format": "date-time" },
+          "status": {
+            "type": "string",
+            "enum": ["scheduled", "checked_in", "in_consultation", "completed", "cancelled", "no_show"]
+          },
+          "version": { "type": "integer", "example": 1 }
         }
       }
     }
@@ -67,9 +76,7 @@
         "summary": "Health check endpoint",
         "tags": ["System"],
         "responses": {
-          "200": {
-            "description": "Service is healthy and database is connected"
-          }
+          "200": { "description": "Service is healthy and database is connected" }
         }
       }
     },
@@ -77,131 +84,97 @@
       "post": {
         "summary": "Authenticate user and set session cookie",
         "tags": ["Authentication"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/LoginRequest" }
-            }
-          }
-        },
         "responses": {
           "200": { "description": "Authentication successful" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "422": { "$ref": "#/components/responses/ValidationError" }
+          "401": { "description": "Invalid credentials" }
         }
       }
     },
-    "/auth/logout": {
-      "post": {
-        "summary": "Log out user and clear session cookie",
-        "tags": ["Authentication"],
-        "security": [{ "cookieAuth": [] }, { "bearerAuth": [] }],
+    "/slots": {
+      "get": {
+        "summary": "Search available slots aligned to schedule in hospital timezone",
+        "tags": ["Slots"],
+        "parameters": [
+          { "name": "doctorId", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "departmentId", "in": "query", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "from", "in": "query", "required": true, "schema": { "type": "string", "example": "2027-01-11" } },
+          { "name": "to", "in": "query", "required": true, "schema": { "type": "string", "example": "2027-01-12" } }
+        ],
         "responses": {
-          "200": { "description": "Logged out successfully" }
+          "200": { "description": "Available slots computed in Asia/Kolkata" },
+          "422": { "description": "Range exceeds 14 days or invalid format" }
         }
       }
     },
-    "/auth/me": {
-      "get": {
-        "summary": "Get authenticated user details",
-        "tags": ["Authentication"],
-        "security": [{ "cookieAuth": [] }, { "bearerAuth": [] }],
+    "/appointments": {
+      "post": {
+        "summary": "Book a new appointment (Front Desk only; requires Idempotency-Key)",
+        "tags": ["Appointments"],
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
         "responses": {
-          "200": { "description": "User profile retrieved" },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "201": { "description": "Appointment booked" },
+          "409": { "description": "SLOT_TAKEN or PATIENT_DOUBLE_BOOKED" },
+          "422": { "description": "VALIDATION_ERROR or IDEMPOTENCY_KEY_REUSED" }
+        }
+      },
+      "get": {
+        "summary": "List appointments with filters and pagination",
+        "tags": ["Appointments"],
+        "responses": {
+          "200": { "description": "Paginated list of appointments" }
         }
       }
     },
-    "/directory/departments": {
-      "get": {
-        "summary": "List departments (Admin, Clinician, Front Desk)",
+    "/appointments/{id}/reschedule": {
+      "patch": {
+        "summary": "Reschedule appointment with optimistic locking version check",
+        "tags": ["Appointments"],
+        "responses": {
+          "200": { "description": "Reschedule successful" },
+          "409": { "description": "STALE_VERSION or SLOT_TAKEN" }
+        }
+      }
+    },
+    "/appointments/{id}/status": {
+      "patch": {
+        "summary": "Transition appointment status (State Machine enforcement)",
+        "tags": ["Appointments"],
+        "responses": {
+          "200": { "description": "Status updated" },
+          "409": { "description": "INVALID_TRANSITION" }
+        }
+      }
+    },
+    "/patients/{id}": {
+      "put": {
+        "summary": "Update patient demographics (Front Desk only; audited before/after)",
+        "tags": ["Patients"],
+        "responses": {
+          "200": { "description": "Patient updated" },
+          "403": { "description": "Forbidden" }
+        }
+      }
+    },
+    "/directory/schedules": {
+      "post": {
+        "summary": "Create doctor schedule rule with overlap checks (Admin only)",
         "tags": ["Directory"],
-        "security": [{ "cookieAuth": [] }, { "bearerAuth": [] }],
-        "responses": { "200": { "description": "List of departments" } }
+        "responses": {
+          "201": { "description": "Schedule created" },
+          "409": { "description": "Overlapping schedule conflict" }
+        }
+      }
+    },
+    "/directory/staff": {
+      "get": {
+        "summary": "List staff users without password hashes (Admin only)",
+        "tags": ["Directory"],
+        "responses": { "200": { "description": "Staff list" } }
       },
       "post": {
-        "summary": "Create department (Admin only)",
+        "summary": "Create staff user with bcrypt hashing (Admin only)",
         "tags": ["Directory"],
-        "security": [{ "cookieAuth": [] }, { "bearerAuth": [] }],
-        "responses": { "201": { "description": "Department created" }, "403": { "$ref": "#/components/responses/Forbidden" } }
-      }
-    },
-    "/patients": {
-      "get": {
-        "summary": "List patients with pagination and search",
-        "tags": ["Patients"],
-        "security": [{ "cookieAuth": [] }, { "bearerAuth": [] }],
-        "responses": { "200": { "description": "Paginated list of patients" } }
-      },
-      "post": {
-        "summary": "Register new synthetic patient (Front Desk only)",
-        "tags": ["Patients"],
-        "security": [{ "cookieAuth": [] }, { "bearerAuth": [] }],
-        "responses": { "201": { "description": "Patient created" }, "403": { "$ref": "#/components/responses/Forbidden" } }
-      }
-    },
-    "/clinical-notes/patients/{patientId}": {
-      "get": {
-        "summary": "Get clinical notes for a patient (Treating Clinician only)",
-        "tags": ["Clinical"],
-        "security": [{ "cookieAuth": [] }, { "bearerAuth": [] }],
-        "responses": { "200": { "description": "Clinical notes" }, "403": { "$ref": "#/components/responses/Forbidden" } }
-      }
-    },
-    "/audit/logs": {
-      "get": {
-        "summary": "View append-only audit trail (Admin only)",
-        "tags": ["Audit"],
-        "security": [{ "cookieAuth": [] }, { "bearerAuth": [] }],
-        "responses": { "200": { "description": "Audit logs" }, "403": { "$ref": "#/components/responses/Forbidden" } }
-      }
-    }
-  },
-  "components": {
-    "responses": {
-      "Unauthorized": {
-        "description": "Unauthorized",
-        "content": {
-          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
-        }
-      },
-      "Forbidden": {
-        "description": "Forbidden",
-        "content": {
-          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
-        }
-      },
-      "ValidationError": {
-        "description": "Validation error",
-        "content": {
-          "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } }
-        }
-      }
-    },
-    "schemas": {
-      "ErrorResponse": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": { "type": "string", "example": "SLOT_TAKEN" },
-              "message": { "type": "string", "example": "The requested slot is already booked" },
-              "details": { "type": "object" },
-              "requestId": { "type": "string", "example": "b18ca0e6-59b3-4674-a69c-29da229a1740" }
-            },
-            "required": ["code", "message", "details", "requestId"]
-          }
-        }
-      },
-      "LoginRequest": {
-        "type": "object",
-        "properties": {
-          "email": { "type": "string", "format": "email", "example": "admin@aarogya.local" },
-          "password": { "type": "string", "example": "Password123!" }
-        },
-        "required": ["email", "password"]
+        "responses": { "201": { "description": "Staff created" } }
       }
     }
   }

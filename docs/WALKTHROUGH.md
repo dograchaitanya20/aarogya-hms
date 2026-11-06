@@ -10,9 +10,6 @@
   - `backend/src/errors/AppError.js`: Domain error hierarchy translating to standardized JSON responses.
   - `backend/src/middleware/errorHandler.js`: Central error handler mapping Zod errors, Postgres exclusion constraint (`23P01`), and custom errors to the standard format.
   - `backend/src/middleware/requestId.js`: Generates / propagates `X-Request-Id` UUID across logs and responses.
-- **Why it was designed this way**:
-  - Predictable error structure `{ error: { code, message, details, requestId } }` ensures frontend error handling is completely uniform.
-  - Request ID correlation ties client failures directly to Pino logs and audit log events.
 
 #### Likely Reviewer Questions & Answers
 1. **Q: Why avoid an ORM (Prisma/TypeORM/Drizzle) in favor of raw `pg`?**
@@ -24,43 +21,52 @@
 
 ---
 
-### 2. Module Overview: PostgreSQL Migrations & Domain Data Model
-- **What it does**: Houses the complete hospital relational model (18 tables) with foreign keys, checks, indexes, and an in-house transaction-safe migration runner (`schema_migrations`).
+## Phase 2: Appointments, Schedules, Slots & Directory Operations
+
+### 2. Module Overview: PostgreSQL Concurrency & Exclusion Constraints
+- **What it does**: Eliminates doctor double-booking and patient overlapping bookings using dual PostgreSQL `btree_gist` exclusion constraints.
 - **Key files**:
-  - `backend/db/migrate.js`: Zero-dependency SQL migration runner executing files in transactional batches.
-  - `backend/db/migrations/001_initial_schema.sql`: Full DDL defining users, departments, doctors, schedules, appointments, encounters, clinical notes, prescriptions, reports, invoices, payments, and audit tables.
-  - `backend/db/seed.js`: Idempotent synthetic data generator populating 8 departments, 16 doctors with weekly schedules, 40 patients, 60 appointments, encounters, notes, and invoices.
-- **Why it was designed this way**:
-  - The double-booking prevention uses PostgreSQL's native `btree_gist` exclusion constraint:
-    `EXCLUDE USING gist (doctor_id WITH =, tstzrange(starts_at, ends_at) WITH &&) WHERE status IN ('scheduled', 'checked_in', 'in_consultation', 'completed')`
-    This provides an absolute mathematical guarantee against double-booking even under concurrent race conditions.
+  - `backend/db/migrations/001_initial_schema.sql`: Added doctor exclusion constraint `uq_doctor_slot_no_overlap`.
+  - `backend/db/migrations/002_patient_exclusion_and_idempotency.sql`: Added patient exclusion constraint `uq_patient_slot_no_overlap` and optimistic locking `version` column.
+  - `backend/scripts/demo-race.js`: Live automated verification running 20 concurrent HTTP bookings, 10 shared-key requests, and 5 concurrent reschedules.
 
 #### Likely Reviewer Questions & Answers
-1. **Q: Why use an EXCLUSION constraint instead of an application-level `SELECT ... FOR UPDATE`?**
-   - **A**: Application-level checks rely on developers remembering locks on every code path (booking, rescheduling, bulk intake). If two requests hit different cluster nodes or threads at the same millisecond, application checks can race. The GiST exclusion constraint enforces the invariant at the storage engine level.
-2. **Q: How is seed idempotency guaranteed?**
-   - **A**: All seed operations use deterministic natural keys (e.g., `email`, `code`, `mrn`, `appointment_number`, `invoice_number`) with `ON CONFLICT DO UPDATE` or `ON CONFLICT DO NOTHING`.
-3. **Q: Why are clinical notes kept strictly separate from diagnostic reports?**
-   - **A**: Least privilege and clinical safety. The non-negotiable rule specifies no automated diagnosis. Clinical notes represent subjective/objective clinician documentation and diagnoses entered by clinicians only, whereas diagnostic reports contain imaging/lab metadata.
+1. **Q: Why use an EXCLUSION constraint instead of SELECT-then-INSERT?**
+   - **A**: In concurrent environments, a `SELECT-then-INSERT` pattern suffers from a classic Time-of-Check to Time-of-Use (TOCTOU) race condition. Even with transaction isolation levels like `READ COMMITTED`, two concurrent transactions can simultaneously execute the check query, find zero rows, and both proceed to insert, causing a double-booking. An `EXCLUDE USING gist` constraint guarantees atomic enforcement at the storage engine index layer without relying on explicit developer locks on every query path.
+2. **Q: Why does the constraint predicate exclude cancelled and no-show appointments?**
+   - **A**: A cancelled or no-show slot is liberated hospital capacity. Excluding `cancelled` and `no_show` from the index predicate allows another patient to legitimately book that exact same doctor and timeframe without manual index re-indexing.
+3. **Q: How does optimistic locking protect appointment reschedules?**
+   - **A**: Each appointment record carries a `version` counter. A reschedule request requires `expectedVersion`. If another staff member has modified or rescheduled the appointment in the interim, the version will not match, raising `409 STALE_VERSION` and preventing stale overwrite.
 
 ---
 
-### 3. Module Overview: Authentication, RBAC Matrix, and Audit Logging
-- **What it does**: Implements session authentication via bcrypt and JWT in `httpOnly` `SameSite=lax` cookies, a centralized RBAC policy table, clinician-to-patient ownership checks, and an append-only audit log.
+### 3. Module Overview: Hospital Timezone & Slot Generation Engine
+- **What it does**: Computes live, unbooked slots aligned to doctor working hours in `Asia/Kolkata` (IST, UTC+05:30) and stores them as UTC `TIMESTAMPTZ`.
 - **Key files**:
-  - `backend/src/config/rbac.js`: Single readable source of truth defining permissions for `admin`, `clinician`, and `front_desk`.
-  - `backend/src/middleware/rbac.js`: Middleware enforcing role requirements and patient relationship checks.
-  - `backend/src/services/auditService.js`: Service logging logins, failures, patient record reads, clinical note reads, and 403 permission denials.
-  - `backend/src/repositories/auditRepository.js`: Database queries for `audit_log`.
-- **Why it was designed this way**:
-  - RBAC is enforced strictly server-side.
-  - Denials return 403 `FORBIDDEN` and immediately write an audit entry with actor, resource, action, IP, and request ID.
-  - The `audit_log` table is protected by a PostgreSQL `BEFORE UPDATE OR DELETE` trigger that raises an exception (`55000`), guaranteeing append-only immutability.
+  - `backend/src/utils/timezone.js`: Timezone conversion engine handling IST &harr; UTC bidirectional transformations without Daylight Saving Time drift.
+  - `backend/src/services/slotService.js`: Scans doctor working schedules, segments slots by `slot_duration_minutes`, filters past timestamps, and excludes active appointments.
+  - `backend/src/controllers/slotController.js`: Serves `GET /api/v1/slots` and `GET /api/v1/doctors/:id/slots`.
 
 #### Likely Reviewer Questions & Answers
-1. **Q: Why use `httpOnly` cookies over storing JWTs in localStorage?**
-   - **A**: `httpOnly` cookies cannot be accessed by browser JavaScript, completely mitigating client-side token theft via Cross-Site Scripting (XSS).
-2. **Q: How does the clinician-patient relationship authorization work?**
-   - **A**: A clinician cannot view notes or patient details for arbitrary patients in the hospital. The `requireClinicianPatientAccess` helper verifies in SQL that the clinician has an active or past appointment/encounter with that specific patient. If not, access is denied (403) and audited.
-3. **Q: Can a rogue administrator or compromised backend delete audit records?**
-   - **A**: No. The database trigger `trg_audit_log_append_only` aborts any `UPDATE` or `DELETE` statement at the database level, preventing tampering even from direct database SQL queries without superuser trigger alterations.
+1. **Q: Why store timestamps as UTC `TIMESTAMPTZ` if the hospital operates in IST?**
+   - **A**: PostgreSQL stores all `TIMESTAMPTZ` internally as UTC (offset 0). Storing canonical UTC eliminates cross-system ambiguity, makes automated cron jobs predictable, and enables seamless integration with external APIs while allowing all client presentation to project into `Asia/Kolkata`.
+2. **Q: How are slots validated against doctor schedules during booking?**
+   - **A**: The booking service validates three invariants: (1) slot start is in the future, (2) slot duration matches the doctor's configured `slot_duration_minutes`, and (3) slot start and end fall completely within the doctor's weekly working hours and align with the slot grid.
+3. **Q: How does the slot engine handle date ranges?**
+   - **A**: Date range searches are strictly constrained to a maximum of 14 days. Requests exceeding 14 days return `422 VALIDATION_ERROR` to protect the database against excessive computational load.
+
+---
+
+### 4. Module Overview: Idempotency Pipeline
+- **What it does**: Guarantees zero duplicate appointment bookings or payments on network retries using the `Idempotency-Key` HTTP header.
+- **Key files**:
+  - `backend/src/middleware/idempotency.js`: Idempotency interceptor using `idempotency_keys` table.
+  - `backend/db/migrations/002_patient_exclusion_and_idempotency.sql`: Added `status` column (`processing` | `completed`).
+
+#### Likely Reviewer Questions & Answers
+1. **Q: What happens if two identical requests arrive with the same Idempotency-Key at the exact same millisecond?**
+   - **A**: The middleware issues an `INSERT ... ON CONFLICT DO NOTHING RETURNING id` with status `processing`. Exactly one request receives the generated ID and becomes the primary worker; the concurrent request detects `status = 'processing'` and receives `409 IDEMPOTENCY_IN_PROGRESS`.
+2. **Q: What happens if a client sends the same Idempotency-Key with a different request payload?**
+   - **A**: The middleware hashes the request body with SHA-256. If a matching key exists with a different hash, it returns `422 IDEMPOTENCY_KEY_REUSED` to prevent payload hijacking.
+3. **Q: Does an uncaught 500 error permanently lock the idempotency key?**
+   - **A**: No. If a server crash or 500 internal error occurs during execution, the middleware deletes the temporary processing record so the client can safely retry once the underlying issue is resolved.

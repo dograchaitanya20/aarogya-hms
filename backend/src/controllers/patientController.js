@@ -73,8 +73,29 @@ export async function createPatient(req, res, next) {
   }
 }
 
+export async function updatePatient(req, res, next) {
+  try {
+    const updated = await patientService.updatePatient(req.params.id, req.body, {
+      user: req.user,
+      reqMeta: {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        requestId: req.id,
+      },
+    });
+
+    res.status(200).json({
+      message: 'Patient record updated successfully',
+      data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export default {
   listPatients,
   getPatient,
   createPatient,
+  updatePatient,
 };

@@ -13,7 +13,15 @@ router.get('/', requireRole('admin', 'front_desk', 'clinician'), patientControll
 // Create patient: strictly front_desk only (least privilege)
 router.post('/', requireRole('front_desk'), patientController.createPatient);
 
-// Get single patient: admin, front_desk, or clinician (with patient relationship check)
-router.get('/:id', requireRole('admin', 'front_desk', 'clinician'), requireClinicianPatientAccess('id'), patientController.getPatient);
+// Update patient: strictly front_desk only
+router.put('/:id', requireRole('front_desk'), patientController.updatePatient);
+
+// Get single patient: front_desk, admin, or clinician (with clinician-patient access verification)
+router.get(
+  '/:id',
+  requireRole('admin', 'front_desk', 'clinician'),
+  requireClinicianPatientAccess('id'),
+  patientController.getPatient
+);
 
 export default router;

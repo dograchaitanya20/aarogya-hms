@@ -121,6 +121,7 @@ erDiagram
         timestamptz checked_in_at
         timestamptz completed_at
         uuid created_by FK
+        int version "Optimistic locking counter"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -259,7 +260,7 @@ erDiagram
 
 ## Key Database Constraints & Features
 
-1. **Double-Booking Exclusion Constraint**:
+1. **Doctor Double-Booking Exclusion Constraint**:
    ```sql
    CONSTRAINT uq_doctor_slot_no_overlap EXCLUDE USING gist (
        doctor_id WITH =,
@@ -267,6 +268,15 @@ erDiagram
    ) WHERE (status IN ('scheduled', 'checked_in', 'in_consultation', 'completed'))
    ```
    Enforced at the storage engine level with `btree_gist`. Any race condition or overlapping insert/update raises SQLSTATE `23P01` and is converted to HTTP 409 `SLOT_TAKEN`.
+
+2. **Patient Double-Booking Exclusion Constraint (Migration 002)**:
+   ```sql
+   CONSTRAINT uq_patient_slot_no_overlap EXCLUDE USING gist (
+       patient_id WITH =,
+       tstzrange(starts_at, ends_at) WITH &&
+   ) WHERE (status IN ('scheduled', 'checked_in', 'in_consultation', 'completed'))
+   ```
+   Enforced at the storage engine level. Prevents a single patient from holding overlapping appointments with multiple doctors simultaneously. Violation raises SQLSTATE `23P01` and is mapped to HTTP 409 `PATIENT_DOUBLE_BOOKED`.
 
 2. **Immutable Audit Log**:
    ```sql

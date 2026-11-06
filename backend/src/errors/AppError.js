@@ -45,8 +45,32 @@ export class SlotTakenError extends ConflictError {
   }
 }
 
+export class PatientDoubleBookedError extends ConflictError {
+  constructor(message = 'The patient already has an active appointment overlapping this time slot', details = {}) {
+    super(message, 'PATIENT_DOUBLE_BOOKED', details);
+  }
+}
+
 export class InvalidTransitionError extends ConflictError {
   constructor(message = 'Invalid appointment status transition', details = {}) {
     super(message, 'INVALID_TRANSITION', details);
+  }
+}
+
+export class StaleVersionError extends ConflictError {
+  constructor(message = 'The appointment was modified by another request. Please reload and try again.', details = {}) {
+    super(message, 'STALE_VERSION', details);
+  }
+}
+
+export class IdempotencyKeyReusedError extends AppError {
+  constructor(message = 'Idempotency key was previously used with a different request payload', details = {}) {
+    super(message, 422, 'IDEMPOTENCY_KEY_REUSED', details);
+  }
+}
+
+export class IdempotencyInProgressError extends ConflictError {
+  constructor(message = 'A request with this idempotency key is currently being processed. Please retry shortly.', details = {}) {
+    super(message, 'IDEMPOTENCY_IN_PROGRESS', details);
   }
 }
