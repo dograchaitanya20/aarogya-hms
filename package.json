@@ -1,0 +1,21 @@
+{
+  "name": "aarogya-hms",
+  "version": "1.0.0",
+  "description": "Aarogya HMS - Hospital Management System",
+  "private": true,
+  "workspaces": [
+    "backend"
+  ],
+  "scripts": {
+    "dev": "npm --workspace=backend run dev",
+    "start": "npm --workspace=backend run start",
+    "migrate": "npm --workspace=backend run migrate",
+    "seed": "npm --workspace=backend run seed",
+    "test": "npm --workspace=backend run test",
+    "demo:race": "npm --workspace=backend run demo:race",
+    "lint": "npm --workspace=backend run lint"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
