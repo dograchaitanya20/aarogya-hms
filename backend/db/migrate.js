@@ -9,12 +9,38 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+async function ensureDatabaseExists(connectionString) {
+  try {
+    const url = new URL(connectionString);
+    const dbName = url.pathname.replace(/^\//, '');
+
+    // Connect to server's maintenance 'postgres' database
+    url.pathname = '/postgres';
+    const client = new pg.Client({ connectionString: url.toString() });
+    await client.connect();
+
+    const res = await client.query('SELECT 1 FROM pg_database WHERE datname = $1', [dbName]);
+    if (res.rows.length === 0) {
+      console.log(`[Migrate] Target database '${dbName}' does not exist. Creating automatically...`);
+      await client.query(`CREATE DATABASE "${dbName}";`);
+      console.log(`[Migrate] Target database '${dbName}' created successfully.`);
+    }
+
+    await client.end();
+  } catch (err) {
+    // If permission or already exists, continue to normal connect
+  }
+}
+
 export async function runMigrations(customDbUrl = null) {
   const connectionString =
     customDbUrl ||
     (process.env.NODE_ENV === 'test'
       ? process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/aarogya_hms_test'
       : process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/aarogya_hms');
+
+  // Ensure DB exists before applying migrations
+  await ensureDatabaseExists(connectionString);
 
   const client = new pg.Client({ connectionString });
   await client.connect();

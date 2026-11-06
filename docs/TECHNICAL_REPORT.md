@@ -95,8 +95,12 @@ The relational schema comprises 18 tables defined in native SQL DDL:
 ---
 
 ## 8. Trade-offs & Known Limitations
-- **Plain SQL vs ORM**: Plain SQL requires explicit DDL migrations and manual object mapping, but guarantees complete explainability during technical walkthroughs and unlocks advanced PostgreSQL features like GiST exclusion and append-only triggers.
-- **Phase 1 Boundaries**: Phase 1 implements backend foundation, data model, RBAC matrix, and audit infrastructure. Interactive frontend screens and full multi-step appointment booking flows are scheduled for subsequent phases.
+1. **Single Hospital Campus Timezone**: The system assumes a single primary hospital operating under `Asia/Kolkata` (IST, UTC+05:30). All schedule logic and slots are processed in local hospital time and converted to UTC `TIMESTAMPTZ` for storage.
+2. **In-Memory Rate Limiting**: The Express rate limiters (`apiLimiter`, `loginLimiter`) operate in Node process memory. In a multi-replica clustered production deployment, a Redis-backed store (`rate-limit-redis`) would be required to share sliding windows across pods.
+3. **Connection Pooling Scale**: Native `pg.Pool` is capped at 20 connections per instance. Production deployments supporting thousands of concurrent clinicians would require an external connection pooler such as PgBouncer.
+4. **Binary Asset Storage**: Diagnostic report records capture metadata, categories, ordering doctor, and test dates. Document binaries (e.g. large radiology DICOMs or PDFs) are intentionally kept out of PostgreSQL; an S3/MinIO presigned URL integration would be needed for raw binary streaming.
+5. **Simulated Payment Gateway**: The billing system models integer paise ledger reconciliation and rejects overpayment. Payment gateway processing is simulated for sandbox testing; real external webhooks (e.g. Razorpay/Stripe) require webhook signature verification endpoints.
+6. **No Algorithmic Clinical Decision Support**: Per non-negotiable requirements, the system strictly disallows automated diagnosis or drug-drug interaction warnings; prescription accuracy relies entirely on treating clinician judgment.
 
 ---
 

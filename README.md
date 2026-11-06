@@ -1,6 +1,6 @@
 # Aarogya HMS — Hospital Management System
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/dograchaitanya20/aarogya-hms/actions/workflows/ci.yml/badge.svg)](https://github.com/dograchaitanya20/aarogya-hms/actions/workflows/ci.yml)
 ![Node 20](https://img.shields.io/badge/node-20.x-green.svg)
 ![PostgreSQL 16](https://img.shields.io/badge/postgresql-16-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-purple.svg)
@@ -13,56 +13,67 @@ Aarogya HMS is an enterprise-grade Hospital Management System designed for high 
 
 ## Reviewer Quick Start
 
-Follow these exact Windows PowerShell commands from initial repository clone to running the system and running all verified test suites:
-
-### 1. Copy Environment File
+### Option A: Windows PowerShell
 ```powershell
+# 1. Copy Environment Configuration
 Copy-Item .env.example .env
-```
 
-### 2. Start PostgreSQL 16 via Docker
-```powershell
+# 2. Start PostgreSQL 16 (Provisions dev 'aarogya_hms' and test 'aarogya_hms_test')
 docker compose up -d
-```
-*(Starts PostgreSQL 16 container with healthchecks and creates both `aarogya_hms` and `aarogya_hms_test` databases on port 5432).*
 
-### 3. Install Dependencies
-```powershell
+# 3. Install Monorepo Dependencies
 npm install
-```
 
-### 4. Run Migrations & Synthetic Seed
-```powershell
+# 4. Run Migrations & Idempotent Synthetic Seed
 npm run migrate
 npm run seed
-```
 
-### 5. Run All Real Database Automated Tests
-```powershell
+# 5. Run All Real Database Automated Tests (Isolated Test Database)
 npm test
-```
 
-### 6. Run the Live Race Condition Double-Booking Demo
-```powershell
+# 6. Run the Live Race Condition Double-Booking Demo
 npm run demo:race
+
+# 7. Start Development Server
+npm run dev
 ```
 
-### 7. Start the Development Server
-```powershell
+### Option B: Windows Command Prompt (`cmd.exe`)
+```cmd
+:: 1. Copy Environment Configuration
+copy .env.example .env
+
+:: 2. Start PostgreSQL 16
+docker compose up -d
+
+:: 3. Install Monorepo Dependencies
+npm install
+
+:: 4. Run Migrations & Synthetic Seed
+npm run migrate
+npm run seed
+
+:: 5. Run Real Database Automated Tests
+npm test
+
+:: 6. Run the Live Race Condition Double-Booking Demo
+npm run demo:race
+
+:: 7. Start Development Server
 npm run dev
 ```
 
 ---
 
-## Key Reviewer Documentation & Artifacts
+## Reviewer Documentation & Verification Artifacts
 
 | Document | Location | Purpose |
 | :--- | :--- | :--- |
 | **Interactive API Docs** | [http://localhost:5000/api/docs](http://localhost:5000/api/docs) | Swagger UI for live endpoint exploration |
 | **Committed Static OpenAPI Spec** | [`docs/openapi.yaml`](docs/openapi.yaml) | Validated OpenAPI 3.0 specification |
 | **Entity Relationship Diagram** | [`docs/ER.md`](docs/ER.md) | Mermaid ER diagram covering all 18 tables and constraints |
-| **Technical Architecture Report** | [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md) | Complete architectural decisions, security, and integrity report |
-| **Test Evidence & Logs** | [`docs/TEST_EVIDENCE.md`](docs/TEST_EVIDENCE.md) | Raw terminal logs, test matrices, and proof of constraints |
+| **Technical Architecture Report** | [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md) | Architectural decisions, integrity, security, and audit report |
+| **Test Evidence & Execution Logs** | [`docs/TEST_EVIDENCE.md`](docs/TEST_EVIDENCE.md) | Raw terminal logs, test matrices, and proof of constraints |
 | **Module Walkthrough Guide** | [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) | Module-by-module breakdown and reviewer interview Q&As |
 
 ---
@@ -95,39 +106,16 @@ Routes  ──>  Controllers  ──>  Services (Business Logic)  ──>  Repos
 - **PostgreSQL `btree_gist` Exclusion Constraints** for physical double-booking prevention (`SQLSTATE 23P01` &rarr; 409 `SLOT_TAKEN`).
 - **Append-only Audit Log** enforced by PostgreSQL DB trigger rejecting any `UPDATE` or `DELETE` with `SQLSTATE 55000`.
 - **All monetary calculations** stored as integer paise (`BIGINT`).
+- **Fixed Hospital Timezone**: `Asia/Kolkata` (UTC+05:30). All schedules and slot calculations are processed in local hospital time and stored as UTC `TIMESTAMPTZ`.
 - **Clinician-entered notes only**: Zero automated diagnosis or algorithmic medical decision making.
 
 ---
 
-## RBAC Matrix Summary
+## Known Limitations & Architectural Assumptions
 
-| Resource | Action | Admin | Clinician | Front Desk | Conditions |
-| :--- | :--- | :---: | :---: | :---: | :--- |
-| **Directory** | Read | YES | YES | YES | Public department / staff lookup |
-| **Directory** | Write | YES | NO | NO | Department & schedule configurations |
-| **Patients** | Read | YES | YES | YES | Clinicians only view treated patients |
-| **Patients** | Create / Edit | NO | NO | YES | Front desk patient registration |
-| **Clinical Notes** | Read / Write | NO | YES | NO | **Strictly treating clinician only**. Admin/Front desk forbidden |
-| **Billing / Invoices** | Read / Write | YES | NO | YES | Clinicians cannot view or edit billing |
-| **Audit Logs** | Read | YES | NO | NO | **System Administrator only**. Append-only DB trigger |
-
-*Every denial returns `403 FORBIDDEN` and automatically logs an audit entry with request details.*
-
----
-
-## Available NPM Scripts
-
-- `npm run dev`: Start backend with hot reload (`node --watch`).
-- `npm run start`: Start production server.
-- `npm run migrate`: Execute unapplied SQL migrations.
-- `npm run seed`: Run idempotent synthetic data seed.
-- `npm test`: Run full Vitest suite against real PostgreSQL test database.
-- `npm run demo:race`: Run the live race condition double-booking demonstration script.
-- `npm run docs:openapi`: Validate OpenAPI specification and sync `docs/openapi.yaml`.
-- `npm run lint`: Perform clean recursive syntax verification on all JS files.
-
----
-
-## Known Limitations
-
-- **Phase 1 Scope**: Phase 1 includes backend foundation, database schema, migrations, seed, auth, RBAC matrix, and audit logging. Interactive appointment booking workflows, front-desk UI, and clinician console are scheduled for subsequent phases.
+1. **Single Hospital Campus Timezone**: The system assumes a single primary hospital operating under `Asia/Kolkata` (IST, UTC+05:30). Supporting a multi-facility network across distinct timezones would require facility-level timezone metadata.
+2. **In-Memory Rate Limiting**: The Express rate limiters (`apiLimiter`, `loginLimiter`) operate in Node process memory. In a multi-replica clustered production deployment, a Redis-backed store (`rate-limit-redis`) would be required to share sliding windows across pods.
+3. **Connection Pooling Scale**: Native `pg.Pool` is capped at 20 connections per instance. Production deployments supporting thousands of concurrent clinicians would require an external connection pooler such as PgBouncer.
+4. **Binary Asset Storage**: Diagnostic report records capture metadata, categories, ordering doctor, and test dates. Document binaries (e.g. large radiology DICOMs or PDFs) are intentionally kept out of PostgreSQL; an S3/MinIO presigned URL integration would be needed for raw binary streaming.
+5. **Simulated Payment Gateway**: The billing system models integer paise ledger reconciliation and rejects overpayment. Payment gateway processing is simulated for sandbox testing; real external webhooks (e.g. Razorpay/Stripe) require webhook signature verification endpoints.
+6. **No Algorithmic Clinical Decision Support**: Per non-negotiable requirements, the system strictly disallows automated diagnosis or drug-drug interaction warnings; prescription accuracy relies entirely on treating clinician judgment.

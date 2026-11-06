@@ -4,15 +4,18 @@ const isTest = process.env.NODE_ENV === 'test';
 
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isTest ? 1000 : 10, // Limit each IP to 10 login attempts per windowMs (1000 in tests)
+  max: isTest ? 1000 : 10, // 10 attempts per IP per 15 min
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    error: {
-      code: 'RATE_LIMIT_EXCEEDED',
-      message: 'Too many login attempts. Please try again after 15 minutes.',
-      details: {},
-    },
+  handler: (req, res) => {
+    res.status(429).json({
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many login attempts. Please try again after 15 minutes.',
+        details: {},
+        requestId: req.id || 'unknown',
+      },
+    });
   },
 });
 
@@ -21,12 +24,15 @@ export const apiLimiter = rateLimit({
   max: isTest ? 5000 : 120, // 120 requests per minute
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    error: {
-      code: 'RATE_LIMIT_EXCEEDED',
-      message: 'Too many requests. Please slow down.',
-      details: {},
-    },
+  handler: (req, res) => {
+    res.status(429).json({
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many requests. Please slow down.',
+        details: {},
+        requestId: req.id || 'unknown',
+      },
+    });
   },
 });
 

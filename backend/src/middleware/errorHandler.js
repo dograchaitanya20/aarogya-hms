@@ -5,7 +5,7 @@ import logger from '../config/logger.js';
 export function errorHandler(err, req, res, next) {
   const requestId = req.id || 'unknown';
 
-  // 1. Zod Validation Errors
+  // 1. Zod Validation Errors (422)
   if (err instanceof ZodError) {
     const fieldDetails = {};
     for (const issue of err.issues) {
@@ -23,7 +23,19 @@ export function errorHandler(err, req, res, next) {
     });
   }
 
-  // 2. Custom Application Errors
+  // Payload Too Large (413) from Express body-parser
+  if (err.type === 'entity.too.large' || err.status === 413) {
+    return res.status(413).json({
+      error: {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: 'Request payload exceeds the maximum allowed size (100kb)',
+        details: {},
+        requestId,
+      },
+    });
+  }
+
+  // 2. Custom Application Domain Errors
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({
       error: {
@@ -37,10 +49,17 @@ export function errorHandler(err, req, res, next) {
 
   // 3. PostgreSQL Exclusion Constraint Violation (SQLSTATE 23P01)
   if (err.code === '23P01') {
+    // Check if it's the doctor slot or patient double booking constraint
+    const isPatientOverlap = err.constraint === 'uq_patient_slot_no_overlap';
+    const code = isPatientOverlap ? 'PATIENT_DOUBLE_BOOKED' : 'SLOT_TAKEN';
+    const message = isPatientOverlap
+      ? 'The patient already has an active appointment overlapping this time slot'
+      : 'The requested appointment slot is already booked for this doctor';
+
     return res.status(409).json({
       error: {
-        code: 'SLOT_TAKEN',
-        message: 'The requested appointment slot is already booked for this doctor',
+        code,
+        message,
         details: { constraint: err.constraint },
         requestId,
       },
@@ -52,8 +71,8 @@ export function errorHandler(err, req, res, next) {
     return res.status(409).json({
       error: {
         code: 'CONFLICT',
-        message: 'A record with the specified unique field already exists',
-        details: { detail: err.detail },
+        message: 'A record with this identifier or unique attribute already exists',
+        details: {},
         requestId,
       },
     });
@@ -64,25 +83,20 @@ export function errorHandler(err, req, res, next) {
     return res.status(403).json({
       error: {
         code: 'AUDIT_IMMUTABLE',
-        message: err.message || 'Audit log entries cannot be modified or deleted',
+        message: 'Audit log entries cannot be modified or deleted',
         details: {},
         requestId,
       },
     });
   }
 
-  // 6. Generic Internal Server Errors
+  // 6. Generic Internal Server Errors (Do NOT leak stack traces or internal SQL)
   logger.error({ err, requestId }, 'Unhandled Application Error');
-
-  const message =
-    process.env.NODE_ENV === 'production'
-      ? 'An unexpected internal error occurred'
-      : err.message || 'Internal Server Error';
 
   return res.status(500).json({
     error: {
       code: 'INTERNAL_ERROR',
-      message,
+      message: 'An unexpected internal server error occurred',
       details: {},
       requestId,
     },

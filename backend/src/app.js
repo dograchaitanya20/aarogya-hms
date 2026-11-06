@@ -39,9 +39,9 @@ app.use(
   })
 );
 
-// Body Parsers & Cookie Parser
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
+// Body Parsers (strict size limits to prevent body-inflation DoS) & Cookie Parser
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 app.use(cookieParser(process.env.COOKIE_SECRET || 'dev-cookie-secret-key-change-in-production'));
 
 // Request ID and Request Logging
