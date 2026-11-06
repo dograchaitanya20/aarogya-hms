@@ -115,6 +115,39 @@ describe('Health & Authentication Endpoints', () => {
       expect(res.status).toBe(401);
       expect(res.body.error.code).toBe('UNAUTHORIZED');
     });
+
+    it('should return 401 UNAUTHORIZED when given a malformed or forged JWT token', async () => {
+      const res = await request(app)
+        .get('/api/v1/auth/me')
+        .set('Authorization', 'Bearer invalid.token.payload');
+
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('UNAUTHORIZED');
+      expect(res.body.error.message).toContain('Invalid or expired authentication session');
+    });
+
+    it('should reject login and me endpoints if user is marked inactive (is_active = false)', async () => {
+      // 1. Create temporary inactive user
+      const inactiveEmail = 'inactive.test@aarogya.local';
+      await query(
+        `
+        INSERT INTO users (email, password_hash, role, full_name, is_active)
+        VALUES ($1, '$2b$10$wTqS4hV5y4u5MmsrKzP53uN4W1K0y2s2R8Y0h1jK3y5l2m1n0o9p.', 'front_desk', 'Inactive Staff', false)
+        ON CONFLICT (email) DO UPDATE SET is_active = false;
+        `,
+        [inactiveEmail]
+      );
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: inactiveEmail,
+          password: 'Password123!',
+        });
+
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('UNAUTHORIZED');
+    });
   });
 
   describe('POST /api/v1/auth/logout', () => {

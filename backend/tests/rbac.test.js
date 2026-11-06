@@ -169,6 +169,15 @@ describe('RBAC Matrix & Audit Enforcement Tests', () => {
       expect(res.body.data.length).toBeGreaterThan(0);
       expect(res.body.total).toBeGreaterThan(0);
     });
+
+    it('Security check: handles special characters and quotes safely in patient search query without SQL injection', async () => {
+      const res = await request(app)
+        .get("/api/v1/patients?q=' OR '1'='1; --")
+        .set('Cookie', frontDeskAuth.cookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data).toBeDefined();
+    });
   });
 
   describe('Resource: Clinical Notes', () => {

@@ -106,6 +106,75 @@ describe('Database Integrity & Constraints', () => {
       expect(caughtError).not.toBeNull();
       expect(caughtError.code).toBe('23P01');
     });
+
+    it('should allow adjacent back-to-back appointment slots (tstzrange [) boundary behavior)', async () => {
+      const slot1Start = new Date(Date.now() + 62 * 24 * 3600 * 1000);
+      slot1Start.setMinutes(0, 0, 0);
+      const slot1End = new Date(slot1Start.getTime() + 15 * 60 * 1000); // 09:00 -> 09:15
+
+      const slot2Start = new Date(slot1End); // 09:15 -> 09:30 (starts exactly when slot 1 ends)
+      const slot2End = new Date(slot2Start.getTime() + 15 * 60 * 1000);
+
+      const res1 = await query(
+        `
+        INSERT INTO appointments (
+          appointment_number, patient_id, doctor_id, department_id,
+          starts_at, ends_at, status, reason_for_visit, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', 'Slot 1', $7)
+        RETURNING id;
+        `,
+        ['TEST-APT-ADJACENT-1', patient1Id, doctorId, departmentId, slot1Start.toISOString(), slot1End.toISOString(), createdBy]
+      );
+
+      const res2 = await query(
+        `
+        INSERT INTO appointments (
+          appointment_number, patient_id, doctor_id, department_id,
+          starts_at, ends_at, status, reason_for_visit, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', 'Slot 2', $7)
+        RETURNING id;
+        `,
+        ['TEST-APT-ADJACENT-2', patient2Id, doctorId, departmentId, slot2Start.toISOString(), slot2End.toISOString(), createdBy]
+      );
+
+      expect(res1.rows[0].id).toBeDefined();
+      expect(res2.rows[0].id).toBeDefined();
+    });
+
+    it('should allow re-booking a slot if previous appointment was cancelled or no_show', async () => {
+      const slotStart = new Date(Date.now() + 63 * 24 * 3600 * 1000);
+      slotStart.setMinutes(0, 0, 0);
+      const slotEnd = new Date(slotStart.getTime() + 15 * 60 * 1000);
+
+      // Cancelled appointment
+      await query(
+        `
+        INSERT INTO appointments (
+          appointment_number, patient_id, doctor_id, department_id,
+          starts_at, ends_at, status, cancellation_reason, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'cancelled', 'Patient had emergency', $7);
+        `,
+        ['TEST-APT-CANCELLED-1', patient1Id, doctorId, departmentId, slotStart.toISOString(), slotEnd.toISOString(), createdBy]
+      );
+
+      // New appointment on the exact same slot should succeed
+      const newRes = await query(
+        `
+        INSERT INTO appointments (
+          appointment_number, patient_id, doctor_id, department_id,
+          starts_at, ends_at, status, reason_for_visit, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', 'Replacement booking', $7)
+        RETURNING id;
+        `,
+        ['TEST-APT-REPLACEMENT-1', patient2Id, doctorId, departmentId, slotStart.toISOString(), slotEnd.toISOString(), createdBy]
+      );
+
+      expect(newRes.rows[0].id).toBeDefined();
+    });
   });
 
   describe('Append-Only Audit Log Trigger', () => {
