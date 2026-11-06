@@ -1,0 +1,151 @@
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { query, pool } from '../src/config/db.js';
+
+describe('Database Integrity & Constraints', () => {
+  let doctorId;
+  let departmentId;
+  let patient1Id;
+  let patient2Id;
+  let createdBy;
+
+  beforeAll(async () => {
+    const doc = await query('SELECT d.id, d.department_id FROM doctors d LIMIT 1;');
+    const patients = await query('SELECT id FROM patients LIMIT 2;');
+    const user = await query('SELECT id FROM users LIMIT 1;');
+
+    doctorId = doc.rows[0].id;
+    departmentId = doc.rows[0].department_id;
+    patient1Id = patients.rows[0].id;
+    patient2Id = patients.rows[1].id;
+    createdBy = user.rows[0].id;
+  });
+
+  afterAll(async () => {
+    await query("DELETE FROM appointments WHERE appointment_number LIKE 'TEST-APT-%'");
+  });
+
+  describe('PostgreSQL btree_gist Exclusion Constraint (Double-Booking Prevention)', () => {
+    it('should reject an overlapping appointment inserted directly via SQL with SQLSTATE 23P01', async () => {
+      const slotStart = new Date(Date.now() + 60 * 24 * 3600 * 1000);
+      slotStart.setMinutes(0, 0, 0);
+      const slotEnd = new Date(slotStart.getTime() + 15 * 60 * 1000);
+
+      // 1. Insert primary booking
+      const res1 = await query(
+        `
+        INSERT INTO appointments (
+          appointment_number, patient_id, doctor_id, department_id,
+          starts_at, ends_at, status, reason_for_visit, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', 'Routine checkup', $7)
+        RETURNING id;
+        `,
+        ['TEST-APT-001', patient1Id, doctorId, departmentId, slotStart.toISOString(), slotEnd.toISOString(), createdBy]
+      );
+      expect(res1.rows[0].id).toBeDefined();
+
+      // 2. Attempt exact overlapping booking for the same doctor
+      let caughtError = null;
+      try {
+        await query(
+          `
+          INSERT INTO appointments (
+            appointment_number, patient_id, doctor_id, department_id,
+            starts_at, ends_at, status, reason_for_visit, created_by
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', 'Conflicting booking', $7)
+          RETURNING id;
+          `,
+          ['TEST-APT-002', patient2Id, doctorId, departmentId, slotStart.toISOString(), slotEnd.toISOString(), createdBy]
+        );
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).not.toBeNull();
+      expect(caughtError.code).toBe('23P01'); // 23P01 is PostgreSQL exclusion_violation
+      expect(caughtError.constraint).toBe('uq_doctor_slot_no_overlap');
+    });
+
+    it('should reject a partial overlapping slot (starts 5 minutes into existing appointment)', async () => {
+      const slotStart = new Date(Date.now() + 61 * 24 * 3600 * 1000);
+      slotStart.setMinutes(0, 0, 0);
+      const slotEnd = new Date(slotStart.getTime() + 15 * 60 * 1000);
+
+      await query(
+        `
+        INSERT INTO appointments (
+          appointment_number, patient_id, doctor_id, department_id,
+          starts_at, ends_at, status, reason_for_visit, created_by
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', 'Routine checkup', $7);
+        `,
+        ['TEST-APT-PARTIAL-1', patient1Id, doctorId, departmentId, slotStart.toISOString(), slotEnd.toISOString(), createdBy]
+      );
+
+      // Overlapping slot: starts 5 mins in, ends 20 mins in
+      const partialStart = new Date(slotStart.getTime() + 5 * 60 * 1000);
+      const partialEnd = new Date(slotStart.getTime() + 20 * 60 * 1000);
+
+      let caughtError = null;
+      try {
+        await query(
+          `
+          INSERT INTO appointments (
+            appointment_number, patient_id, doctor_id, department_id,
+            starts_at, ends_at, status, reason_for_visit, created_by
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', 'Conflicting booking', $7);
+          `,
+          ['TEST-APT-PARTIAL-2', patient2Id, doctorId, departmentId, partialStart.toISOString(), partialEnd.toISOString(), createdBy]
+        );
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).not.toBeNull();
+      expect(caughtError.code).toBe('23P01');
+    });
+  });
+
+  describe('Append-Only Audit Log Trigger', () => {
+    let testAuditId;
+
+    beforeAll(async () => {
+      const res = await query(
+        `
+        INSERT INTO audit_log (action, entity_type, entity_id, ip_address, request_id)
+        VALUES ('TEST_ACTION', 'test_entity', 'test-123', '127.0.0.1', 'req-test-123')
+        RETURNING id;
+        `
+      );
+      testAuditId = res.rows[0].id;
+    });
+
+    it('should reject UPDATE on audit_log with trigger exception', async () => {
+      let caughtError = null;
+      try {
+        await query("UPDATE audit_log SET action = 'MODIFIED_ACTION' WHERE id = $1", [testAuditId]);
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).not.toBeNull();
+      expect(caughtError.code).toBe('55000');
+      expect(caughtError.message).toContain('audit_log is append-only');
+    });
+
+    it('should reject DELETE on audit_log with trigger exception', async () => {
+      let caughtError = null;
+      try {
+        await query('DELETE FROM audit_log WHERE id = $1', [testAuditId]);
+      } catch (err) {
+        caughtError = err;
+      }
+
+      expect(caughtError).not.toBeNull();
+      expect(caughtError.code).toBe('55000');
+      expect(caughtError.message).toContain('audit_log is append-only');
+    });
+  });
+});
