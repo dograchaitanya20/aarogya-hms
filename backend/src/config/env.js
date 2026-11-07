@@ -12,7 +12,10 @@ export const HOSPITAL_TZ = process.env.HOSPITAL_TZ || 'Asia/Kolkata';
 // Duration parser helper
 export function parseDurationToSeconds(durationStr) {
   if (typeof durationStr === 'number') return durationStr;
-  const match = String(durationStr || '').trim().match(/^(\d+)([smhd])$/);
+  if (!durationStr) return 0;
+  const str = String(durationStr).trim();
+  if (/^\d+$/.test(str)) return parseInt(str, 10);
+  const match = str.match(/^(\d+)([smhd])$/);
   if (!match) return NaN;
   const num = parseInt(match[1], 10);
   const unit = match[2];

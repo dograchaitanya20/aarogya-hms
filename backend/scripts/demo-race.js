@@ -110,7 +110,19 @@ async function runRealHttpRaceDemo() {
       );
       process.exit(1);
     }
-    console.log(`[PASSED] Winner Appointment ID: ${winner.id} (${winner.appointment_number})\n`);
+
+    // Explicitly assert error.code === 'SLOT_TAKEN' on every 409 conflict
+    const slotTakenErrors = scenario1Results.filter(
+      (r) => r.status === 409 && r.body.error?.code === 'SLOT_TAKEN'
+    );
+    if (slotTakenErrors.length !== 19) {
+      console.error(
+        `[ASSERTION FAILED] Expected 19 responses with error.code 'SLOT_TAKEN', got ${slotTakenErrors.length}:`,
+        scenario1Results.filter((r) => r.status === 409).map((r) => r.body)
+      );
+      process.exit(1);
+    }
+    console.log(`[PASSED] Winner Appointment ID: ${winner.id} (${winner.appointment_number}); all 19 rejections verified with error.code='SLOT_TAKEN'\n`);
 
     // -------------------------------------------------------------
     // SCENARIO 2: 10 Concurrent Requests with the SAME Idempotency-Key
@@ -240,7 +252,19 @@ async function runRealHttpRaceDemo() {
       );
       process.exit(1);
     }
-    console.log('[PASSED] Exactly 1 reschedule succeeded into target slot; 4 rejected with 409.\n');
+
+    // Explicitly assert error.code === 'SLOT_TAKEN' on every 409 reschedule conflict
+    const sc3SlotTakenErrors = scenario3Results.filter(
+      (r) => r.status === 409 && r.body.error?.code === 'SLOT_TAKEN'
+    );
+    if (sc3SlotTakenErrors.length !== 4) {
+      console.error(
+        `[ASSERTION FAILED] Scenario 3 expected 4 responses with error.code 'SLOT_TAKEN', got ${sc3SlotTakenErrors.length}:`,
+        scenario3Results.filter((r) => r.status === 409).map((r) => r.body)
+      );
+      process.exit(1);
+    }
+    console.log('[PASSED] Exactly 1 reschedule succeeded into target slot; 4 rejected with error.code=\'SLOT_TAKEN\'.\n');
 
     // Cleanup demo test records
     await query("DELETE FROM appointments WHERE starts_at >= '2027-01-11T00:00:00Z' AND starts_at < '2027-01-12T00:00:00Z';");

@@ -65,5 +65,7 @@ jobs:
 
       - name: Run Race Condition Demo
         env:
+          NODE_ENV: test
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/aarogya_hms_test
+          JWT_SECRET: ci-test-secret-min-32-characters-long
         run: npm run demo:race

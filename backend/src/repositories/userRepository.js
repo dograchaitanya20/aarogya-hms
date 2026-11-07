@@ -28,11 +28,13 @@ export async function findById(id) {
 }
 
 export async function checkClinicianPatientAccess(clinicianUserId, patientId) {
-  // Clinician has access to a patient if they have an appointment or encounter with them
+  // Clinician has access to a patient if they have an appointment OR encounter with them
   const sql = `
-    SELECT 1 FROM appointments a
-    JOIN doctors d ON d.id = a.doctor_id
-    WHERE d.user_id = $1 AND a.patient_id = $2
+    SELECT 1 FROM doctors d
+    WHERE d.user_id = $1 AND (
+      EXISTS (SELECT 1 FROM appointments a WHERE a.doctor_id = d.id AND a.patient_id = $2)
+      OR EXISTS (SELECT 1 FROM encounters e WHERE e.doctor_id = d.id AND e.patient_id = $2)
+    )
     LIMIT 1;
   `;
   const result = await query(sql, [clinicianUserId, patientId]);
