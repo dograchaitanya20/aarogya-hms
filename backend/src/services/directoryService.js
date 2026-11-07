@@ -278,12 +278,153 @@ export async function listStaff({ role = null, page = 1, pageSize = 20, q = '' }
   };
 }
 
+export async function getDoctorById(id) {
+  const doctor = await doctorRepository.getDoctorById(id);
+  if (!doctor) {
+    throw new NotFoundError(`Doctor with ID '${id}' not found.`);
+  }
+  return doctor;
+}
+
+export async function updateDepartment(id, updates, { user, reqMeta }) {
+  const current = await departmentRepository.getDepartmentById(id);
+  if (!current) {
+    throw new NotFoundError(`Department with ID '${id}' not found.`);
+  }
+  const updated = await departmentRepository.updateDepartment(id, updates);
+  await auditService.logAction({
+    actorId: user.id,
+    actorRole: user.role,
+    action: 'UPDATE_DEPARTMENT',
+    entityType: 'department',
+    entityId: id,
+    beforeState: current,
+    afterState: updated,
+    ipAddress: reqMeta.ip,
+    userAgent: reqMeta.userAgent,
+    requestId: reqMeta.requestId,
+  });
+  return updated;
+}
+
+export async function deleteDepartment(id, { user, reqMeta }) {
+  const current = await departmentRepository.getDepartmentById(id);
+  if (!current) {
+    throw new NotFoundError(`Department with ID '${id}' not found.`);
+  }
+  const deleted = await departmentRepository.deleteDepartment(id);
+  await auditService.logAction({
+    actorId: user.id,
+    actorRole: user.role,
+    action: 'DELETE_DEPARTMENT',
+    entityType: 'department',
+    entityId: id,
+    beforeState: current,
+    afterState: deleted,
+    ipAddress: reqMeta.ip,
+    userAgent: reqMeta.userAgent,
+    requestId: reqMeta.requestId,
+  });
+  return deleted;
+}
+
+export async function updateDoctor(id, updates, { user, reqMeta }) {
+  const current = await doctorRepository.getDoctorById(id);
+  if (!current) {
+    throw new NotFoundError(`Doctor with ID '${id}' not found.`);
+  }
+  const updated = await doctorRepository.updateDoctor(id, updates);
+  await auditService.logAction({
+    actorId: user.id,
+    actorRole: user.role,
+    action: 'UPDATE_DOCTOR',
+    entityType: 'doctor',
+    entityId: id,
+    beforeState: current,
+    afterState: updated,
+    ipAddress: reqMeta.ip,
+    userAgent: reqMeta.userAgent,
+    requestId: reqMeta.requestId,
+  });
+  return updated;
+}
+
+export async function deleteDoctor(id, { user, reqMeta }) {
+  const current = await doctorRepository.getDoctorById(id);
+  if (!current) {
+    throw new NotFoundError(`Doctor with ID '${id}' not found.`);
+  }
+  const deleted = await doctorRepository.deleteDoctor(id);
+  await auditService.logAction({
+    actorId: user.id,
+    actorRole: user.role,
+    action: 'DELETE_DOCTOR',
+    entityType: 'doctor',
+    entityId: id,
+    beforeState: current,
+    afterState: deleted,
+    ipAddress: reqMeta.ip,
+    userAgent: reqMeta.userAgent,
+    requestId: reqMeta.requestId,
+  });
+  return deleted;
+}
+
+export async function updateSchedule(id, updates, { user, reqMeta }) {
+  const current = await scheduleRepository.getScheduleById(id);
+  if (!current) {
+    throw new NotFoundError(`Schedule with ID '${id}' not found.`);
+  }
+  const updated = await scheduleRepository.updateSchedule(id, updates);
+  await auditService.logAction({
+    actorId: user.id,
+    actorRole: user.role,
+    action: 'UPDATE_DOCTOR_SCHEDULE',
+    entityType: 'doctor_schedule',
+    entityId: id,
+    beforeState: current,
+    afterState: updated,
+    ipAddress: reqMeta.ip,
+    userAgent: reqMeta.userAgent,
+    requestId: reqMeta.requestId,
+  });
+  return updated;
+}
+
+export async function deleteSchedule(id, { user, reqMeta }) {
+  const current = await scheduleRepository.getScheduleById(id);
+  if (!current) {
+    throw new NotFoundError(`Schedule with ID '${id}' not found.`);
+  }
+  const deleted = await scheduleRepository.deleteSchedule(id);
+  await auditService.logAction({
+    actorId: user.id,
+    actorRole: user.role,
+    action: 'DELETE_DOCTOR_SCHEDULE',
+    entityType: 'doctor_schedule',
+    entityId: id,
+    beforeState: current,
+    afterState: deleted,
+    ipAddress: reqMeta.ip,
+    userAgent: reqMeta.userAgent,
+    requestId: reqMeta.requestId,
+  });
+  return deleted;
+}
+
 export default {
   getDepartments,
   createDepartment,
+  updateDepartment,
+  deleteDepartment,
   listDoctors,
+  getDoctorById,
   createDoctorWithUser,
+  updateDoctor,
+  deleteDoctor,
   createScheduleRule,
+  updateSchedule,
+  deleteSchedule,
   getDoctorSchedules,
   createStaffUser,
   setStaffActiveStatus,

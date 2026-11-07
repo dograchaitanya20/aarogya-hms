@@ -10,6 +10,11 @@ export async function getSchedulesByDoctorId(doctorId) {
   return result.rows;
 }
 
+export async function getScheduleById(id) {
+  const result = await query('SELECT * FROM doctor_schedules WHERE id = $1;', [id]);
+  return result.rows[0] || null;
+}
+
 export async function checkOverlappingSchedule(doctorId, dayOfWeek, startTime, endTime, excludeId = null) {
   let sql = `
     SELECT id FROM doctor_schedules
@@ -52,6 +57,48 @@ export async function createSchedule({
   return result.rows[0];
 }
 
+export async function updateSchedule(id, updates) {
+  const fields = [];
+  const values = [];
+
+  if (updates.startTime !== undefined) {
+    values.push(updates.startTime);
+    fields.push(`start_time = $${values.length}`);
+  }
+  if (updates.endTime !== undefined) {
+    values.push(updates.endTime);
+    fields.push(`end_time = $${values.length}`);
+  }
+  if (updates.slotDurationMinutes !== undefined) {
+    values.push(updates.slotDurationMinutes);
+    fields.push(`slot_duration_minutes = $${values.length}`);
+  }
+  if (updates.isActive !== undefined) {
+    values.push(updates.isActive);
+    fields.push(`is_active = $${values.length}`);
+  }
+
+  if (fields.length === 0) return await getScheduleById(id);
+
+  values.push(id);
+  const sql = `
+    UPDATE doctor_schedules
+    SET ${fields.join(', ')}
+    WHERE id = $${values.length}
+    RETURNING *;
+  `;
+  const result = await query(sql, values);
+  return result.rows[0] || null;
+}
+
+export async function deleteSchedule(id) {
+  const result = await query(
+    'UPDATE doctor_schedules SET is_active = false WHERE id = $1 RETURNING *;',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
 export async function getActiveAppointmentsForDoctorInRange(doctorId, startUtc, endUtc) {
   const sql = `
     SELECT id, starts_at, ends_at, status
@@ -67,7 +114,10 @@ export async function getActiveAppointmentsForDoctorInRange(doctorId, startUtc, 
 
 export default {
   getSchedulesByDoctorId,
+  getScheduleById,
   checkOverlappingSchedule,
   createSchedule,
+  updateSchedule,
+  deleteSchedule,
   getActiveAppointmentsForDoctorInRange,
 };

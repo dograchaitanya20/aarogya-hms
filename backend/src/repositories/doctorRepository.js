@@ -109,9 +109,18 @@ export async function updateDoctor(id, updates) {
   return result.rows[0];
 }
 
+export async function deleteDoctor(id) {
+  const result = await query(
+    'UPDATE doctors SET is_active = false, updated_at = clock_timestamp() WHERE id = $1 RETURNING *;',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
 export default {
   getAllDoctors,
   getDoctorById,
   createDoctor,
   updateDoctor,
+  deleteDoctor,
 };

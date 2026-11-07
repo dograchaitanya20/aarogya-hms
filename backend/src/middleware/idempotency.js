@@ -46,6 +46,13 @@ export async function reapStaleProcessingKeys(maxAgeSeconds = 60) {
   }
 }
 
+// Background timer to periodically reap stale processing keys without blocking requests
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(() => {
+    reapStaleProcessingKeys(60).catch(() => {});
+  }, 60000).unref();
+}
+
 export function requireIdempotencyKey(req, res, next) {
   const key = req.headers['idempotency-key'] || req.headers['Idempotency-Key'];
   if (!key || typeof key !== 'string' || !key.trim()) {
@@ -70,9 +77,6 @@ export function idempotency(options = { required: true }) {
     const requestPath = req.baseUrl + req.path;
     const requestMethod = req.method;
     const requestHash = computeCanonicalHash(req.body);
-
-    // Opportunistically reap stale processing keys older than 60s
-    await reapStaleProcessingKeys(60);
 
     try {
       // 1. Attempt to insert key in 'processing' state scoped by (user_id, method, path, key)
@@ -131,7 +135,9 @@ export function idempotency(options = { required: true }) {
         return next();
       }
 
-      // 2. Key already exists in database - fetch record
+      // 2. Key already exists in database (insert conflict). Run reaper only on conflict.
+      await reapStaleProcessingKeys(60);
+
       const existingRes = await query(
         `
         SELECT * FROM idempotency_keys

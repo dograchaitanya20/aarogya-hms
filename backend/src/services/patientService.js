@@ -1,10 +1,11 @@
 import patientRepository from '../repositories/patientRepository.js';
 import auditService from './auditService.js';
-import { NotFoundError } from '../errors/AppError.js';
+import { NotFoundError, ValidationError } from '../errors/AppError.js';
 import { query } from '../config/db.js';
 
 export async function listPatients({ page = 1, pageSize = 20, q = '', user, reqMeta }) {
-  const result = await patientRepository.getPatients({ page, pageSize, q });
+  const clinicianDoctorId = user.role === 'clinician' ? user.doctor_id : null;
+  const result = await patientRepository.getPatients({ page, pageSize, q, clinicianDoctorId });
 
   // Audit read of patient list
   await auditService.logAction({
@@ -13,7 +14,7 @@ export async function listPatients({ page = 1, pageSize = 20, q = '', user, reqM
     action: 'READ_PATIENT_LIST',
     entityType: 'patient',
     entityId: 'list',
-    afterState: { count: result.data.length, page, q },
+    afterState: { count: result.data.length, page, q, clinicianDoctorId },
     ipAddress: reqMeta.ip,
     userAgent: reqMeta.userAgent,
     requestId: reqMeta.requestId,
@@ -44,8 +45,7 @@ export async function getPatient(patientId, { user, reqMeta }) {
 }
 
 export async function createPatient(data, { user, reqMeta }) {
-  const mrn = data.mrn || `MRN-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`;
-  const patient = await patientRepository.createPatient({ ...data, mrn });
+  const patient = await patientRepository.createPatient(data);
 
   // Audit creation of patient
   await auditService.logAction({
@@ -103,6 +103,10 @@ export async function updatePatient(id, data, { user, reqMeta }) {
   if (data.allergies !== undefined) {
     values.push(data.allergies || null);
     fields.push(`allergies = $${values.length}`);
+  }
+
+  if (fields.length === 0) {
+    throw new ValidationError('At least one field must be provided to update patient demographics.');
   }
 
   values.push(id);

@@ -15,15 +15,32 @@ import {
   utcToHospitalTimeStr,
 } from '../utils/timezone.js';
 
-// Valid Appointment State Machine Transitions
+// Valid Appointment State Machine Transitions (strict AGENTS.md compliance)
 const ALLOWED_TRANSITIONS = {
-  scheduled: ['checked_in', 'in_consultation', 'cancelled', 'no_show'],
+  scheduled: ['checked_in', 'cancelled', 'no_show'],
   checked_in: ['in_consultation', 'cancelled'],
   in_consultation: ['completed'],
   completed: [],
   cancelled: [],
   no_show: [],
 };
+
+export async function withDeadlockRetry(fn, maxRetries = 3) {
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    try {
+      return await fn();
+    } catch (err) {
+      if (err.code === '40P01' && attempt < maxRetries) {
+        // Deadlock detected - brief random backoff then retry
+        await new Promise((resolve) => setTimeout(resolve, Math.random() * 30 + 10));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
 
 export async function validateSlotAlignment(doctor, startsAtUtc, endsAtUtc) {
   const now = new Date();
@@ -129,53 +146,54 @@ export async function bookAppointment({
   // Validate slot rules (in future, inside schedule, aligned)
   await validateSlotAlignment(doctor, startsAtUtc, endsAtUtc);
 
-  // Generate unique appointment number
-  const aptNumber = `APT-${Date.now().toString().slice(-6)}-${Math.floor(
-    Math.random() * 900 + 100
-  )}`;
+  // Transaction wrapping with deadlock retry & consistent advisory locks (Doctor 1, Patient 2)
+  return await withDeadlockRetry(async () => {
+    const client = await getClient();
+    try {
+      await client.query('BEGIN');
 
-  // Transaction wrapping: appointment creation + audit entry in ONE transaction
-  const client = await getClient();
-  try {
-    await client.query('BEGIN');
+      // Acquire advisory transaction locks in strict, consistent global order
+      await client.query('SELECT pg_advisory_xact_lock(1, hashtext($1));', [doctor.id]);
+      await client.query('SELECT pg_advisory_xact_lock(2, hashtext($1));', [patient.id]);
 
-    const appointment = await appointmentRepository.createAppointment(
-      {
-        appointmentNumber: aptNumber,
-        patientId: patient.id,
-        doctorId: doctor.id,
-        departmentId: doctor.department_id,
-        startsAt: startsAtUtc.toISOString(),
-        endsAt: endsAtUtc.toISOString(),
-        reasonForVisit: reasonForVisit || 'General clinical consultation',
-        createdBy: user.id,
-      },
-      client
-    );
+      const appointment = await appointmentRepository.createAppointment(
+        {
+          appointmentNumber: null, // Let PostgreSQL sequence seq_appointment_number generate it
+          patientId: patient.id,
+          doctorId: doctor.id,
+          departmentId: doctor.department_id,
+          startsAt: startsAtUtc.toISOString(),
+          endsAt: endsAtUtc.toISOString(),
+          reasonForVisit: reasonForVisit || 'General clinical consultation',
+          createdBy: user.id,
+        },
+        client
+      );
 
-    await auditService.logAction(
-      {
-        actorId: user.id,
-        actorRole: user.role,
-        action: 'CREATE_APPOINTMENT',
-        entityType: 'appointment',
-        entityId: appointment.id,
-        afterState: appointment,
-        ipAddress: reqMeta.ip,
-        userAgent: reqMeta.userAgent,
-        requestId: reqMeta.requestId,
-      },
-      client
-    );
+      await auditService.logAction(
+        {
+          actorId: user.id,
+          actorRole: user.role,
+          action: 'CREATE_APPOINTMENT',
+          entityType: 'appointment',
+          entityId: appointment.id,
+          afterState: appointment,
+          ipAddress: reqMeta.ip,
+          userAgent: reqMeta.userAgent,
+          requestId: reqMeta.requestId,
+        },
+        client
+      );
 
-    await client.query('COMMIT');
-    return appointment;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+      await client.query('COMMIT');
+      return appointment;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
 }
 
 export async function rescheduleAppointment({
@@ -224,45 +242,51 @@ export async function rescheduleAppointment({
   // Validate new slot
   await validateSlotAlignment(doctor, startsAtUtc, endsAtUtc);
 
-  // Transaction wrapping: reschedule + audit in ONE transaction
-  const client = await getClient();
-  try {
-    await client.query('BEGIN');
+  // Transaction wrapping with deadlock retry & consistent advisory locks (Doctor 1, Patient 2)
+  return await withDeadlockRetry(async () => {
+    const client = await getClient();
+    try {
+      await client.query('BEGIN');
 
-    const updated = await appointmentRepository.rescheduleAppointment(
-      {
-        id,
-        startsAt: startsAtUtc.toISOString(),
-        endsAt: endsAtUtc.toISOString(),
-        expectedVersion: Number(expectedVersion),
-      },
-      client
-    );
+      // Acquire advisory transaction locks in strict, consistent global order
+      await client.query('SELECT pg_advisory_xact_lock(1, hashtext($1));', [current.doctor_id]);
+      await client.query('SELECT pg_advisory_xact_lock(2, hashtext($1));', [current.patient_id]);
 
-    await auditService.logAction(
-      {
-        actorId: user.id,
-        actorRole: user.role,
-        action: 'RESCHEDULE_APPOINTMENT',
-        entityType: 'appointment',
-        entityId: id,
-        beforeState: { starts_at: current.starts_at, ends_at: current.ends_at, version: current.version },
-        afterState: { starts_at: updated.starts_at, ends_at: updated.ends_at, version: updated.version },
-        ipAddress: reqMeta.ip,
-        userAgent: reqMeta.userAgent,
-        requestId: reqMeta.requestId,
-      },
-      client
-    );
+      const updated = await appointmentRepository.rescheduleAppointment(
+        {
+          id,
+          startsAt: startsAtUtc.toISOString(),
+          endsAt: endsAtUtc.toISOString(),
+          expectedVersion: Number(expectedVersion),
+        },
+        client
+      );
 
-    await client.query('COMMIT');
-    return updated;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+      await auditService.logAction(
+        {
+          actorId: user.id,
+          actorRole: user.role,
+          action: 'RESCHEDULE_APPOINTMENT',
+          entityType: 'appointment',
+          entityId: id,
+          beforeState: { starts_at: current.starts_at, ends_at: current.ends_at, version: current.version },
+          afterState: { starts_at: updated.starts_at, ends_at: updated.ends_at, version: updated.version },
+          ipAddress: reqMeta.ip,
+          userAgent: reqMeta.userAgent,
+          requestId: reqMeta.requestId,
+        },
+        client
+      );
+
+      await client.query('COMMIT');
+      return updated;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
 }
 
 export async function updateStatus({

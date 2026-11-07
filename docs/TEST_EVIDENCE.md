@@ -47,12 +47,12 @@ npm test
  ✓ tests/security-isolation.test.js (5 tests) 123ms
  ✓ tests/auth.test.js (10 tests) 444ms
  ✓ tests/rbac.test.js (19 tests) 633ms
- ✓ tests/phase2.test.js (13 tests) 818ms
- ✓ tests/phase2-fixes.test.js (18 tests) 9579ms
+ ✓ tests/phase2.test.js (13 tests) 826ms
+ ✓ tests/phase2-fixes.test.js (18 tests) 1689ms
 
  Test Files  7 passed (7)
       Tests  76 passed (76)
-   Duration  11.96s
+   Duration  3.88s
 ```
 
 ---

@@ -1,9 +1,17 @@
 import { query } from '../config/db.js';
 
-export async function getPatients({ page = 1, pageSize = 20, q = '' }) {
+export async function getPatients({ page = 1, pageSize = 20, q = '', clinicianDoctorId = null }) {
   const offset = (page - 1) * pageSize;
   let sql = 'SELECT * FROM patients WHERE is_active = true';
   const values = [];
+
+  if (clinicianDoctorId) {
+    values.push(clinicianDoctorId);
+    sql += ` AND (
+      id IN (SELECT patient_id FROM appointments WHERE doctor_id = $${values.length})
+      OR id IN (SELECT patient_id FROM encounters WHERE doctor_id = $${values.length})
+    )`;
+  }
 
   if (q && q.trim()) {
     values.push(`%${q.trim()}%`);
@@ -43,11 +51,14 @@ export async function createPatient(patientData) {
       mrn, full_name, date_of_birth, gender, phone, email,
       address, emergency_contact_name, emergency_contact_phone, blood_group, allergies
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    VALUES (
+      COALESCE($1, 'MRN-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-' || LPAD(NEXTVAL('seq_patient_mrn')::TEXT, 6, '0')),
+      $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    )
     RETURNING *;
   `;
   const values = [
-    patientData.mrn,
+    patientData.mrn || null,
     patientData.fullName,
     patientData.dateOfBirth,
     patientData.gender,

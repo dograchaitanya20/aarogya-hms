@@ -119,7 +119,10 @@ export async function createAppointment(
       appointment_number, patient_id, doctor_id, department_id,
       starts_at, ends_at, status, reason_for_visit, created_by, version
     )
-    VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, 1)
+    VALUES (
+      COALESCE($1, 'APT-' || TO_CHAR(CURRENT_DATE, 'YYYY') || '-' || LPAD(NEXTVAL('seq_appointment_number')::TEXT, 6, '0')),
+      $2, $3, $4, $5, $6, 'scheduled', $7, $8, 1
+    )
     RETURNING *;
   `;
   const result = await runner.query(sql, [

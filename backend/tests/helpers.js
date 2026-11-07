@@ -19,8 +19,15 @@ export async function loginAs(email, password = 'Password123!') {
 }
 
 export async function getTestDoctorAndPatients() {
-  const docRes = await query('SELECT d.id, d.department_id, d.user_id, u.email FROM doctors d JOIN users u ON u.id = d.user_id LIMIT 2;');
-  const patientRes = await query('SELECT id, full_name, mrn FROM patients LIMIT 3;');
+  const docRes = await query(
+    `SELECT d.id, d.department_id, d.user_id, u.email
+     FROM doctors d
+     JOIN users u ON u.id = d.user_id
+     WHERE u.email LIKE 'dr.%@aarogya.local'
+     ORDER BY u.email ASC
+     LIMIT 2;`
+  );
+  const patientRes = await query('SELECT id, full_name, mrn FROM patients ORDER BY created_at ASC LIMIT 3;');
   const adminRes = await query("SELECT id, email FROM users WHERE role = 'admin' LIMIT 1;");
   const frontDeskRes = await query("SELECT id, email FROM users WHERE role = 'front_desk' LIMIT 1;");
 
