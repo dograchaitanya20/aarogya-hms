@@ -18,6 +18,8 @@ const rescheduleSchema = z.object({
 const statusSchema = z.object({
   status: z.enum(['scheduled', 'checked_in', 'in_consultation', 'completed', 'cancelled', 'no_show']),
   cancellationReason: z.string().optional(),
+  expectedStatus: z.enum(['scheduled', 'checked_in', 'in_consultation', 'completed', 'cancelled', 'no_show']).optional(),
+  expectedVersion: z.number().int().positive().optional(),
 });
 
 export async function book(req, res, next) {
@@ -61,7 +63,11 @@ export async function list(req, res, next) {
 
 export async function getById(req, res, next) {
   try {
-    const appointment = await appointmentService.getAppointmentById(req.params.id, req.user);
+    const appointment = await appointmentService.getAppointmentById(req.params.id, req.user, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      requestId: req.id,
+    });
     res.status(200).json({ data: appointment });
   } catch (err) {
     next(err);

@@ -1,3 +1,4 @@
+import { getClient } from '../config/db.js';
 import appointmentRepository from '../repositories/appointmentRepository.js';
 import doctorRepository from '../repositories/doctorRepository.js';
 import patientRepository from '../repositories/patientRepository.js';
@@ -16,7 +17,7 @@ import {
 
 // Valid Appointment State Machine Transitions
 const ALLOWED_TRANSITIONS = {
-  scheduled: ['checked_in', 'cancelled', 'no_show'],
+  scheduled: ['checked_in', 'in_consultation', 'cancelled', 'no_show'],
   checked_in: ['in_consultation', 'cancelled'],
   in_consultation: ['completed'],
   completed: [],
@@ -37,26 +38,31 @@ export async function validateSlotAlignment(doctor, startsAtUtc, endsAtUtc) {
 
   const dayOfWeek = getHospitalDayOfWeek(startsAtUtc);
   const schedules = await scheduleRepository.getSchedulesByDoctorId(doctor.id);
-  const matchingSchedule = schedules.find((s) => s.day_of_week === dayOfWeek);
+  const daySchedules = schedules.filter((s) => s.day_of_week === dayOfWeek);
 
-  if (!matchingSchedule) {
+  if (daySchedules.length === 0) {
     throw new ValidationError(
       `Doctor ${doctor.doctor_name} has no working schedule on day of week ${dayOfWeek}.`
-    );
-  }
-
-  if (durationMinutes !== matchingSchedule.slot_duration_minutes) {
-    throw new ValidationError(
-      `Appointment duration (${durationMinutes}m) must exactly match doctor's slot duration (${matchingSchedule.slot_duration_minutes}m).`
     );
   }
 
   const localStartTime = utcToHospitalTimeStr(startsAtUtc);
   const localEndTime = utcToHospitalTimeStr(endsAtUtc);
 
-  if (localStartTime < matchingSchedule.start_time || localEndTime > matchingSchedule.end_time) {
+  // Pick the schedule rule that CONTAINS the requested slot
+  const matchingSchedule = daySchedules.find(
+    (s) => localStartTime >= s.start_time && localEndTime <= s.end_time
+  );
+
+  if (!matchingSchedule) {
     throw new ValidationError(
-      `Requested slot (${localStartTime} - ${localEndTime}) is outside doctor's working hours (${matchingSchedule.start_time} - ${matchingSchedule.end_time}).`
+      `Requested slot (${localStartTime} - ${localEndTime}) is outside doctor's working schedule on this day.`
+    );
+  }
+
+  if (durationMinutes !== matchingSchedule.slot_duration_minutes) {
+    throw new ValidationError(
+      `Appointment duration (${durationMinutes}m) must exactly match doctor's slot duration (${matchingSchedule.slot_duration_minutes}m).`
     );
   }
 
@@ -88,6 +94,16 @@ export async function bookAppointment({
 }) {
   // Authorization: front_desk only
   if (user.role !== 'front_desk') {
+    await auditService.logPermissionDenied({
+      actorId: user.id,
+      actorRole: user.role,
+      resource: 'appointment',
+      action: 'POST',
+      ipAddress: reqMeta.ip,
+      userAgent: reqMeta.userAgent,
+      requestId: reqMeta.requestId,
+      details: { requiredRole: 'front_desk', actualRole: user.role },
+    });
     throw new ForbiddenError(
       `Only front_desk staff may book appointments. Role '${user.role}' is not authorized.`
     );
@@ -118,31 +134,48 @@ export async function bookAppointment({
     Math.random() * 900 + 100
   )}`;
 
-  const appointment = await appointmentRepository.createAppointment({
-    appointmentNumber: aptNumber,
-    patientId: patient.id,
-    doctorId: doctor.id,
-    departmentId: doctor.department_id,
-    startsAt: startsAtUtc.toISOString(),
-    endsAt: endsAtUtc.toISOString(),
-    reasonForVisit: reasonForVisit || 'General clinical consultation',
-    createdBy: user.id,
-  });
+  // Transaction wrapping: appointment creation + audit entry in ONE transaction
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
 
-  // Audit appointment booking
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: 'CREATE_APPOINTMENT',
-    entityType: 'appointment',
-    entityId: appointment.id,
-    afterState: appointment,
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
-  });
+    const appointment = await appointmentRepository.createAppointment(
+      {
+        appointmentNumber: aptNumber,
+        patientId: patient.id,
+        doctorId: doctor.id,
+        departmentId: doctor.department_id,
+        startsAt: startsAtUtc.toISOString(),
+        endsAt: endsAtUtc.toISOString(),
+        reasonForVisit: reasonForVisit || 'General clinical consultation',
+        createdBy: user.id,
+      },
+      client
+    );
 
-  return appointment;
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'CREATE_APPOINTMENT',
+        entityType: 'appointment',
+        entityId: appointment.id,
+        afterState: appointment,
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+
+    await client.query('COMMIT');
+    return appointment;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function rescheduleAppointment({
@@ -153,14 +186,24 @@ export async function rescheduleAppointment({
   user,
   reqMeta,
 }) {
+  // Authorization check FIRST before reading or validating state
+  if (user.role !== 'front_desk') {
+    await auditService.logPermissionDenied({
+      actorId: user.id,
+      actorRole: user.role,
+      resource: `appointment/${id}/reschedule`,
+      action: 'PATCH',
+      ipAddress: reqMeta.ip,
+      userAgent: reqMeta.userAgent,
+      requestId: reqMeta.requestId,
+      details: { requiredRole: 'front_desk', actualRole: user.role },
+    });
+    throw new ForbiddenError('Only front_desk staff are authorized to reschedule appointments.');
+  }
+
   const current = await appointmentRepository.findAppointmentById(id);
   if (!current) {
     throw new NotFoundError(`Appointment with ID '${id}' not found.`);
-  }
-
-  // RBAC: front_desk only can reschedule
-  if (user.role !== 'front_desk') {
-    throw new ForbiddenError('Only front_desk staff are authorized to reschedule appointments.');
   }
 
   // Only 'scheduled' or 'checked_in' appointments can be rescheduled
@@ -181,38 +224,130 @@ export async function rescheduleAppointment({
   // Validate new slot
   await validateSlotAlignment(doctor, startsAtUtc, endsAtUtc);
 
-  // Single transaction reschedule with optimistic version check
-  const updated = await appointmentRepository.rescheduleAppointment({
-    id,
-    startsAt: startsAtUtc.toISOString(),
-    endsAt: endsAtUtc.toISOString(),
-    expectedVersion: Number(expectedVersion),
-  });
+  // Transaction wrapping: reschedule + audit in ONE transaction
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
 
-  // Audit reschedule
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: 'RESCHEDULE_APPOINTMENT',
-    entityType: 'appointment',
-    entityId: id,
-    beforeState: { starts_at: current.starts_at, ends_at: current.ends_at, version: current.version },
-    afterState: { starts_at: updated.starts_at, ends_at: updated.ends_at, version: updated.version },
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
-  });
+    const updated = await appointmentRepository.rescheduleAppointment(
+      {
+        id,
+        startsAt: startsAtUtc.toISOString(),
+        endsAt: endsAtUtc.toISOString(),
+        expectedVersion: Number(expectedVersion),
+      },
+      client
+    );
 
-  return updated;
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'RESCHEDULE_APPOINTMENT',
+        entityType: 'appointment',
+        entityId: id,
+        beforeState: { starts_at: current.starts_at, ends_at: current.ends_at, version: current.version },
+        afterState: { starts_at: updated.starts_at, ends_at: updated.ends_at, version: updated.version },
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+
+    await client.query('COMMIT');
+    return updated;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
-export async function updateStatus({ id, status, cancellationReason, user, reqMeta }) {
+export async function updateStatus({
+  id,
+  status,
+  cancellationReason,
+  expectedStatus = null,
+  expectedVersion = null,
+  user,
+  reqMeta,
+}) {
+  // Authorization check (role, ownership) FIRST before reading or state-machine validation
+  if (user.role === 'admin') {
+    await auditService.logPermissionDenied({
+      actorId: user.id,
+      actorRole: user.role,
+      resource: `appointment/${id}/status`,
+      action: 'PATCH',
+      ipAddress: reqMeta.ip,
+      userAgent: reqMeta.userAgent,
+      requestId: reqMeta.requestId,
+      details: { reason: 'Admin users have read-only access to appointments.' },
+    });
+    throw new ForbiddenError('Admin users have read-only access to appointments.');
+  }
+
   const current = await appointmentRepository.findAppointmentById(id);
   if (!current) {
     throw new NotFoundError(`Appointment with ID '${id}' not found.`);
   }
 
-  // Validate State Machine Transition
+  if (user.role === 'clinician') {
+    // Clinicians can only update their own appointments
+    if (user.doctor_id !== current.doctor_id) {
+      await auditService.logPermissionDenied({
+        actorId: user.id,
+        actorRole: user.role,
+        resource: `appointment/${id}/status`,
+        action: 'PATCH',
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+        details: { reason: 'Clinicians may only update appointments assigned to themselves.', doctorId: current.doctor_id },
+      });
+      throw new ForbiddenError('Clinicians may only update appointments assigned to themselves.');
+    }
+
+    // Clinicians may ONLY move own appointments: scheduled/checked_in -> in_consultation, in_consultation -> completed
+    if (status !== 'in_consultation' && status !== 'completed') {
+      await auditService.logPermissionDenied({
+        actorId: user.id,
+        actorRole: user.role,
+        resource: `appointment/${id}/status`,
+        action: 'PATCH',
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+        details: { reason: `Clinicians may only set status to 'in_consultation' or 'completed'. Requested: '${status}'.` },
+      });
+      throw new ForbiddenError(
+        `Clinicians may only start ('in_consultation') or complete ('completed') their own consultations.`
+      );
+    }
+  }
+
+  if (user.role === 'front_desk') {
+    // Front desk can do: checked_in, cancelled, no_show
+    if (status === 'in_consultation' || status === 'completed') {
+      await auditService.logPermissionDenied({
+        actorId: user.id,
+        actorRole: user.role,
+        resource: `appointment/${id}/status`,
+        action: 'PATCH',
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+        details: { reason: `Front desk staff cannot set status to '${status}'.` },
+      });
+      throw new ForbiddenError(
+        `Front desk staff cannot set status to '${status}'. Consultations must be conducted by the clinician.`
+      );
+    }
+  }
+
+  // Validate State Machine Transition AFTER authorization
   const allowed = ALLOWED_TRANSITIONS[current.status] || [];
   if (!allowed.includes(status)) {
     throw new InvalidTransitionError(
@@ -224,64 +359,55 @@ export async function updateStatus({ id, status, cancellationReason, user, reqMe
     throw new ValidationError('A cancellation reason is required when cancelling an appointment.');
   }
 
-  // Role Permissions
-  if (user.role === 'admin') {
-    throw new ForbiddenError('Admin users have read-only access to appointments.');
-  }
-
-  if (user.role === 'clinician') {
-    // Clinicians can only update their own appointments
-    if (user.doctor_id !== current.doctor_id) {
-      throw new ForbiddenError('Clinicians may only update appointments assigned to themselves.');
-    }
-    // Clinicians may perform: in_consultation, completed, cancelled
-    if (status !== 'in_consultation' && status !== 'completed' && status !== 'cancelled') {
-      throw new ForbiddenError(
-        `Clinicians cannot set status to '${status}'. Front desk staff must handle reception workflows.`
-      );
-    }
-  }
-
-  if (user.role === 'front_desk') {
-    // Front desk can do: checked_in, cancelled, no_show
-    if (status === 'in_consultation' || status === 'completed') {
-      throw new ForbiddenError(
-        `Front desk staff cannot set status to '${status}'. Consultations must be conducted by the clinician.`
-      );
-    }
-  }
-
   const nowIso = new Date().toISOString();
   const checkedInAt = status === 'checked_in' ? nowIso : null;
   const completedAt = status === 'completed' ? nowIso : null;
 
-  const updated = await appointmentRepository.updateAppointmentStatus({
-    id,
-    status,
-    cancellationReason: cancellationReason ? cancellationReason.trim() : null,
-    checkedInAt,
-    completedAt,
-  });
+  // Transaction wrapping: status update (with expectedStatus check) + audit in ONE transaction
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
 
-  // Audit state transition
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: status === 'cancelled' ? 'CANCEL_APPOINTMENT' : 'UPDATE_APPOINTMENT_STATUS',
-    entityType: 'appointment',
-    entityId: id,
-    beforeState: { status: current.status, version: current.version },
-    afterState: { status: updated.status, cancellationReason, version: updated.version },
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
-  });
+    const updated = await appointmentRepository.updateAppointmentStatus(
+      {
+        id,
+        status,
+        expectedStatus: expectedStatus || current.status,
+        expectedVersion: expectedVersion || null,
+        cancellationReason: cancellationReason ? cancellationReason.trim() : null,
+        checkedInAt,
+        completedAt,
+      },
+      client
+    );
 
-  return updated;
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: status === 'cancelled' ? 'CANCEL_APPOINTMENT' : 'UPDATE_APPOINTMENT_STATUS',
+        entityType: 'appointment',
+        entityId: id,
+        beforeState: { status: current.status, version: current.version },
+        afterState: { status: updated.status, cancellationReason, version: updated.version },
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+
+    await client.query('COMMIT');
+    return updated;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function getAppointments(filters, user) {
-  // If user is clinician, force doctorId filter to own appointments
   const effectiveFilters = { ...filters };
   if (user.role === 'clinician') {
     effectiveFilters.doctorId = user.doctor_id;
@@ -289,15 +415,32 @@ export async function getAppointments(filters, user) {
   return await appointmentRepository.listAppointments(effectiveFilters);
 }
 
-export async function getAppointmentById(id, user) {
+export async function getAppointmentById(id, user, reqMeta = {}) {
+  // Clinician ownership check
+  if (user.role === 'clinician') {
+    const apt = await appointmentRepository.findAppointmentById(id);
+    if (!apt) {
+      throw new NotFoundError(`Appointment with ID '${id}' not found.`);
+    }
+    if (apt.doctor_id !== user.doctor_id) {
+      await auditService.logPermissionDenied({
+        actorId: user.id,
+        actorRole: user.role,
+        resource: `appointment/${id}`,
+        action: 'GET',
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+        details: { reason: 'Clinicians may only view their own appointments.' },
+      });
+      throw new ForbiddenError('Clinicians may only view their own appointments.');
+    }
+    return apt;
+  }
+
   const apt = await appointmentRepository.findAppointmentById(id);
   if (!apt) {
     throw new NotFoundError(`Appointment with ID '${id}' not found.`);
-  }
-
-  // Clinician can only view own appointments
-  if (user.role === 'clinician' && apt.doctor_id !== user.doctor_id) {
-    throw new ForbiddenError('Clinicians may only view their own appointments.');
   }
 
   return apt;

@@ -1,5 +1,5 @@
 import { query } from '../config/db.js';
-import { StaleVersionError, NotFoundError } from '../errors/AppError.js';
+import { StaleVersionError, NotFoundError, InvalidTransitionError } from '../errors/AppError.js';
 
 export async function findAppointmentById(id, client = null) {
   const runner = client || { query };
@@ -164,11 +164,19 @@ export async function rescheduleAppointment(
 }
 
 export async function updateAppointmentStatus(
-  { id, status, cancellationReason = null, checkedInAt = null, completedAt = null },
+  {
+    id,
+    status,
+    expectedStatus = null,
+    expectedVersion = null,
+    cancellationReason = null,
+    checkedInAt = null,
+    completedAt = null,
+  },
   client = null
 ) {
   const runner = client || { query };
-  const sql = `
+  let sql = `
     UPDATE appointments
     SET status = $2,
         cancellation_reason = COALESCE($3, cancellation_reason),
@@ -177,11 +185,34 @@ export async function updateAppointmentStatus(
         version = version + 1,
         updated_at = clock_timestamp()
     WHERE id = $1
-    RETURNING *;
   `;
-  const result = await runner.query(sql, [id, status, cancellationReason, checkedInAt, completedAt]);
+  const params = [id, status, cancellationReason, checkedInAt, completedAt];
+
+  if (expectedStatus) {
+    params.push(expectedStatus);
+    sql += ` AND status = $${params.length}`;
+  }
+  if (expectedVersion) {
+    params.push(expectedVersion);
+    sql += ` AND version = $${params.length}`;
+  }
+
+  sql += ' RETURNING *;';
+
+  const result = await runner.query(sql, params);
   if (result.rows.length === 0) {
-    throw new NotFoundError(`Appointment with ID '${id}' not found`);
+    const checkRes = await runner.query('SELECT status, version FROM appointments WHERE id = $1', [id]);
+    if (checkRes.rows.length === 0) {
+      throw new NotFoundError(`Appointment with ID '${id}' not found`);
+    }
+    if (expectedVersion && checkRes.rows[0].version !== expectedVersion) {
+      throw new StaleVersionError(
+        `Appointment was modified by another operation (expected version ${expectedVersion}, current version ${checkRes.rows[0].version})`
+      );
+    }
+    throw new InvalidTransitionError(
+      `Appointment was concurrently modified (current status '${checkRes.rows[0].status}', expected '${expectedStatus}')`
+    );
   }
   return result.rows[0];
 }

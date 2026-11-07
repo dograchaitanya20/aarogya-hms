@@ -47,8 +47,8 @@ export function errorHandler(err, req, res, next) {
     });
   }
 
-  // 3. PostgreSQL Exclusion Constraint Violation (SQLSTATE 23P01)
-  if (err.code === '23P01') {
+  // 3. PostgreSQL Exclusion Constraint Violation (SQLSTATE 23P01) or Deadlock under concurrency (40P01)
+  if (err.code === '23P01' || err.code === '40P01') {
     // Check if it's the doctor slot or patient double booking constraint
     const isPatientOverlap = err.constraint === 'uq_patient_slot_no_overlap';
     const code = isPatientOverlap ? 'PATIENT_DOUBLE_BOOKED' : 'SLOT_TAKEN';

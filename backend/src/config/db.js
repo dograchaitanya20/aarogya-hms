@@ -13,9 +13,9 @@ const connectionString =
 
 export const pool = new pg.Pool({
   connectionString,
-  max: 20,
+  max: 50,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  connectionTimeoutMillis: 10000,
 });
 
 export const query = (text, params) => pool.query(text, params);

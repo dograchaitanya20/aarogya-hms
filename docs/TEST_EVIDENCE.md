@@ -12,7 +12,8 @@ This document provides verified test evidence executed against a real PostgreSQL
 | [`tests/auth.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/auth.test.js) | Health & Authentication Endpoints | 10 | 10 | 0 |
 | [`tests/rbac.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/rbac.test.js) | RBAC Matrix & Audit Log Enforcement | 19 | 19 | 0 |
 | [`tests/phase2.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/phase2.test.js) | Appointments, Slots, Idempotency & Concurrency | 13 | 13 | 0 |
-| **Total** | **Full Backend Test Suite** | **58** | **58** | **0** |
+| [`tests/phase2-fixes.test.js`](file:///c:/Users/ASUS/Downloads/aarogya-hms/backend/tests/phase2-fixes.test.js) | Slot Containment, RBAC Ordering, User-Scoped Idempotency & Concurrency Fixes | 18 | 18 | 0 |
+| **Total** | **Full Backend Test Suite** | **76** | **76** | **0** |
 
 ---
 
@@ -41,17 +42,17 @@ npm test
 [Seed] Seeding 60 appointments...
 [Seed] Database seed completed successfully!
 [Test Setup] Test database ready.
- ✓ tests/timezone.test.js (5 tests) 49ms
- ✓ tests/db.test.js (6 tests) 239ms
- ✓ tests/security-isolation.test.js (5 tests) 127ms
- ✓ tests/auth.test.js (10 tests) 455ms
- ✓ tests/rbac.test.js (19 tests) 638ms
- ✓ tests/phase2.test.js (13 tests) 849ms
+ ✓ tests/timezone.test.js (5 tests) 39ms
+ ✓ tests/db.test.js (6 tests) 209ms
+ ✓ tests/security-isolation.test.js (5 tests) 123ms
+ ✓ tests/auth.test.js (10 tests) 444ms
+ ✓ tests/rbac.test.js (19 tests) 633ms
+ ✓ tests/phase2.test.js (13 tests) 818ms
+ ✓ tests/phase2-fixes.test.js (18 tests) 9579ms
 
- Test Files  6 passed (6)
-      Tests  58 passed (58)
-   Start at  00:12:42
-   Duration  3.16s (transform 372ms, setup 0ms, collect 4.64s, tests 2.36s, environment 2ms, prepare 1.23s)
+ Test Files  7 passed (7)
+      Tests  76 passed (76)
+   Duration  11.96s
 ```
 
 ---

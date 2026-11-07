@@ -1,38 +1,56 @@
 import auditRepository from '../repositories/auditRepository.js';
 import logger from '../config/logger.js';
 
-export async function logAction({
-  actorId = null,
-  actorRole = null,
-  action,
-  entityType,
-  entityId,
-  beforeState = null,
-  afterState = null,
-  ipAddress = null,
-  userAgent = null,
-  requestId = null,
-}) {
+export async function logAction(
+  {
+    actorId = null,
+    actorRole = null,
+    action,
+    entityType,
+    entityId,
+    beforeState = null,
+    afterState = null,
+    ipAddress = null,
+    userAgent = null,
+    requestId = null,
+  },
+  client = null
+) {
   try {
-    return await auditRepository.createAuditEntry({
-      actorId,
-      actorRole,
-      action,
-      entityType,
-      entityId,
-      beforeState,
-      afterState,
-      ipAddress,
-      userAgent,
-      requestId,
-    });
+    return await auditRepository.createAuditEntry(
+      {
+        actorId,
+        actorRole,
+        action,
+        entityType,
+        entityId,
+        beforeState,
+        afterState,
+        ipAddress,
+        userAgent,
+        requestId,
+      },
+      client
+    );
   } catch (err) {
     logger.error({ err, action, entityType, entityId }, 'Failed to write audit log entry');
-    // Note: Do not throw here unless required, or allow silent failure if DB allows, but DB trigger ensures immutability
+    // If inside a transaction client, re-throw to guarantee transactional rollback!
+    if (client) {
+      throw err;
+    }
   }
 }
 
-export async function logAuthEvent({ action, email, actorId = null, actorRole = null, ipAddress, userAgent, requestId, details = {} }) {
+export async function logAuthEvent({
+  action,
+  email,
+  actorId = null,
+  actorRole = null,
+  ipAddress,
+  userAgent,
+  requestId,
+  details = {},
+}) {
   return logAction({
     actorId,
     actorRole,
@@ -46,13 +64,22 @@ export async function logAuthEvent({ action, email, actorId = null, actorRole = 
   });
 }
 
-export async function logPermissionDenied({ actorId = null, actorRole = null, resource, action, ipAddress, userAgent, requestId, details = {} }) {
+export async function logPermissionDenied({
+  actorId = null,
+  actorRole = null,
+  resource,
+  action,
+  ipAddress = null,
+  userAgent = null,
+  requestId = null,
+  details = {},
+}) {
   return logAction({
     actorId,
     actorRole,
     action: 'PERMISSION_DENIED',
-    entityType: resource,
-    entityId: details.entityId || 'resource',
+    entityType: 'authorization',
+    entityId: resource,
     afterState: { attemptedAction: action, ...details },
     ipAddress,
     userAgent,

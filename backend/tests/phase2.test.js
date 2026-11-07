@@ -296,6 +296,7 @@ describe('Phase 2 Integration Tests: Appointments, Slots, RBAC & Concurrency', (
     });
 
     it('Admin: creates schedule rule and rejects overlapping schedule rules', async () => {
+      await query('DELETE FROM doctor_schedules WHERE doctor_id = $1 AND day_of_week = 6;', [doctor2.id]);
       const res1 = await request(app)
         .post('/api/v1/directory/schedules')
         .set('Cookie', adminAuth.cookie)

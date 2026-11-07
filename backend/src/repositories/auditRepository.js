@@ -1,17 +1,21 @@
 import { query } from '../config/db.js';
 
-export async function createAuditEntry({
-  actorId = null,
-  actorRole = null,
-  action,
-  entityType,
-  entityId,
-  beforeState = null,
-  afterState = null,
-  ipAddress = null,
-  userAgent = null,
-  requestId = null,
-}) {
+export async function createAuditEntry(
+  {
+    actorId = null,
+    actorRole = null,
+    action,
+    entityType,
+    entityId,
+    beforeState = null,
+    afterState = null,
+    ipAddress = null,
+    userAgent = null,
+    requestId = null,
+  },
+  client = null
+) {
+  const runner = client || { query };
   const sql = `
     INSERT INTO audit_log (
       actor_id, actor_role, action, entity_type, entity_id,
@@ -34,7 +38,7 @@ export async function createAuditEntry({
     requestId,
   ];
 
-  const result = await query(sql, values);
+  const result = await runner.query(sql, values);
   return result.rows[0];
 }
 
