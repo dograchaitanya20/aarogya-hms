@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import directoryService from '../services/directoryService.js';
+import { parsePagination } from '../utils/pagination.js';
 
 const createDepartmentSchema = z.object({
   name: z.string().min(2),
@@ -250,8 +251,7 @@ export async function getDoctorSchedules(req, res, next) {
 export async function listStaff(req, res, next) {
   try {
     const { role, q } = req.query;
-    const page = parseInt(req.query.page || '1', 10);
-    const pageSize = parseInt(req.query.pageSize || '20', 10);
+    const { page, pageSize } = parsePagination(req.query, 20);
 
     const result = await directoryService.listStaff({ role, q, page, pageSize });
     res.status(200).json(result);

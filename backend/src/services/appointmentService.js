@@ -1,8 +1,9 @@
-import { getClient } from '../config/db.js';
+import { withTransaction } from '../utils/transaction.js';
 import appointmentRepository from '../repositories/appointmentRepository.js';
 import doctorRepository from '../repositories/doctorRepository.js';
 import patientRepository from '../repositories/patientRepository.js';
 import scheduleRepository from '../repositories/scheduleRepository.js';
+import clinicalRepository from '../repositories/clinicalRepository.js';
 import auditService from './auditService.js';
 import {
   ValidationError,
@@ -148,13 +149,9 @@ export async function bookAppointment({
 
   // Transaction wrapping with deadlock retry & consistent advisory locks (Doctor 1, Patient 2)
   return await withDeadlockRetry(async () => {
-    const client = await getClient();
-    try {
-      await client.query('BEGIN');
-
-      // Acquire advisory transaction locks in strict, consistent global order
-      await client.query('SELECT pg_advisory_xact_lock(1, hashtext($1));', [doctor.id]);
-      await client.query('SELECT pg_advisory_xact_lock(2, hashtext($1));', [patient.id]);
+    return withTransaction(async (client) => {
+      // Locks are taken in one fixed order (doctor, then patient) so concurrent requests cannot deadlock
+      await appointmentRepository.lockBookingResources(client, doctor.id, patient.id);
 
       const appointment = await appointmentRepository.createAppointment(
         {
@@ -185,14 +182,8 @@ export async function bookAppointment({
         client
       );
 
-      await client.query('COMMIT');
       return appointment;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
   });
 }
 
@@ -244,13 +235,8 @@ export async function rescheduleAppointment({
 
   // Transaction wrapping with deadlock retry & consistent advisory locks (Doctor 1, Patient 2)
   return await withDeadlockRetry(async () => {
-    const client = await getClient();
-    try {
-      await client.query('BEGIN');
-
-      // Acquire advisory transaction locks in strict, consistent global order
-      await client.query('SELECT pg_advisory_xact_lock(1, hashtext($1));', [current.doctor_id]);
-      await client.query('SELECT pg_advisory_xact_lock(2, hashtext($1));', [current.patient_id]);
+    return withTransaction(async (client) => {
+      await appointmentRepository.lockBookingResources(client, current.doctor_id, current.patient_id);
 
       const updated = await appointmentRepository.rescheduleAppointment(
         {
@@ -278,14 +264,8 @@ export async function rescheduleAppointment({
         client
       );
 
-      await client.query('COMMIT');
       return updated;
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
   });
 }
 
@@ -388,10 +368,7 @@ export async function updateStatus({
   const completedAt = status === 'completed' ? nowIso : null;
 
   // Transaction wrapping: status update (with expectedStatus check) + audit in ONE transaction
-  const client = await getClient();
-  try {
-    await client.query('BEGIN');
-
+  return withTransaction(async (client) => {
     const updated = await appointmentRepository.updateAppointmentStatus(
       {
         id,
@@ -404,6 +381,34 @@ export async function updateStatus({
       },
       client
     );
+
+    // Encounter lifecycle lives in the same transaction as the status change:
+    // starting a consultation opens an encounter, completing it closes the encounter.
+    if (status === 'in_consultation') {
+      const encounter = await clinicalRepository.insertEncounter(
+        { appointmentId: id, patientId: current.patient_id, doctorId: current.doctor_id },
+        client
+      );
+      if (encounter) {
+        await auditService.logAction(
+          {
+            actorId: user.id,
+            actorRole: user.role,
+            action: 'CREATE_ENCOUNTER',
+            entityType: 'encounter',
+            entityId: encounter.id,
+            afterState: { appointmentId: id, patientId: current.patient_id },
+            ipAddress: reqMeta.ip,
+            userAgent: reqMeta.userAgent,
+            requestId: reqMeta.requestId,
+          },
+          client
+        );
+      }
+    }
+    if (status === 'completed') {
+      await clinicalRepository.completeEncounterByAppointment(id, client);
+    }
 
     await auditService.logAction(
       {
@@ -421,14 +426,8 @@ export async function updateStatus({
       client
     );
 
-    await client.query('COMMIT');
     return updated;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 export async function getAppointments(filters, user) {

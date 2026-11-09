@@ -170,6 +170,26 @@ async function runRealHttpRaceDemo() {
     const successfulResponses = scenario2Results.filter((r) => r.status === 201 || r.status === 200);
     const uniqueAptIds = new Set(successfulResponses.map((r) => r.body.data?.id));
 
+    // Every response must be either the original/replayed success (201/200) or an explicit
+    // 409 IDEMPOTENCY_IN_PROGRESS. Anything else (500, SLOT_TAKEN, etc.) is a bug.
+    const sc2Breakdown = {};
+    for (const r of scenario2Results) {
+      const label = r.status === 409 ? `409 ${r.body.error?.code}` : String(r.status);
+      sc2Breakdown[label] = (sc2Breakdown[label] || 0) + 1;
+    }
+    console.log('Scenario 2 Response Breakdown:', JSON.stringify(sc2Breakdown));
+    const unexpected = scenario2Results.filter(
+      (r) =>
+        !(r.status === 201 || r.status === 200) &&
+        !(r.status === 409 && r.body.error?.code === 'IDEMPOTENCY_IN_PROGRESS')
+    );
+    if (unexpected.length > 0 || successfulResponses.length < 1) {
+      console.error(
+        `[ASSERTION FAILED] Scenario 2: expected only 201/200 or 409 IDEMPOTENCY_IN_PROGRESS with at least one success. Unexpected: ${JSON.stringify(unexpected.map((r) => ({ status: r.status, code: r.body.error?.code })))}`
+      );
+      process.exit(1);
+    }
+
     if (dbCount !== 1 || uniqueAptIds.size !== 1) {
       console.error(
         `[ASSERTION FAILED] Scenario 2 Expected exactly 1 DB row and 1 unique appointment ID. Got dbCount=${dbCount}, uniqueIds=${uniqueAptIds.size}`

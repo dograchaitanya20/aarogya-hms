@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { UnauthorizedError } from '../errors/AppError.js';
 import userRepository from '../repositories/userRepository.js';
+import { JWT_SECRET } from '../config/env.js';
 
 export async function requireAuth(req, res, next) {
   try {
@@ -17,10 +18,9 @@ export async function requireAuth(req, res, next) {
       throw new UnauthorizedError('Authentication token missing. Please log in.');
     }
 
-    const secret = process.env.JWT_SECRET || 'dev-jwt-super-secret-key-change-in-production-min-32-chars';
     let decoded;
     try {
-      decoded = jwt.verify(token, secret);
+      decoded = jwt.verify(token, JWT_SECRET);
     } catch (jwtErr) {
       throw new UnauthorizedError('Invalid or expired authentication session. Please log in again.');
     }

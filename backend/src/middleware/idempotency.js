@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { query } from '../config/db.js';
+import idempotencyRepository from '../repositories/idempotencyRepository.js';
 import {
   IdempotencyKeyReusedError,
   IdempotencyInProgressError,
@@ -33,14 +33,7 @@ export function computeCanonicalHash(body) {
  */
 export async function reapStaleProcessingKeys(maxAgeSeconds = 60) {
   try {
-    await query(
-      `
-      DELETE FROM idempotency_keys
-      WHERE status = 'processing'
-        AND created_at < clock_timestamp() - ($1 || ' seconds')::INTERVAL;
-      `,
-      [maxAgeSeconds]
-    );
+    await idempotencyRepository.reapStale(maxAgeSeconds);
   } catch (err) {
     logger.warn({ err }, 'Error running idempotency stale reaper');
   }
@@ -79,27 +72,16 @@ export function idempotency(options = { required: true }) {
     const requestHash = computeCanonicalHash(req.body);
 
     try {
-      // 1. Attempt to insert key in 'processing' state scoped by (user_id, method, path, key)
-      const insertSql = `
-        INSERT INTO idempotency_keys (
-          user_id, idempotency_key, request_path, request_method, request_hash,
-          status, response_status, expires_at
-        )
-        VALUES ($1, $2, $3, $4, $5, 'processing', 0, clock_timestamp() + INTERVAL '24 hours')
-        ON CONFLICT ON CONSTRAINT uq_idempotency_scope DO NOTHING
-        RETURNING id;
-      `;
-
-      const insertRes = await query(insertSql, [
+      // 1. Insert the key in 'processing' state, scoped by (user_id, method, path, key)
+      const recordId = await idempotencyRepository.tryStart({
         userId,
-        trimmedKey,
+        key: trimmedKey,
         requestPath,
         requestMethod,
         requestHash,
-      ]);
+      });
 
-      if (insertRes.rows.length > 0) {
-        const recordId = insertRes.rows[0].id;
+      if (recordId) {
         const originalJson = res.json.bind(res);
         const originalSend = res.send.bind(res);
 
@@ -110,19 +92,10 @@ export function idempotency(options = { required: true }) {
 
           try {
             if (statusCode < 500) {
-              await query(
-                `
-                UPDATE idempotency_keys
-                SET status = 'completed',
-                    response_status = $2,
-                    response_body = $3
-                WHERE id = $1;
-                `,
-                [recordId, statusCode, JSON.stringify(body)]
-              );
+              await idempotencyRepository.complete(recordId, statusCode, body);
             } else {
               // On internal error (500), release the key so client may retry
-              await query('DELETE FROM idempotency_keys WHERE id = $1;', [recordId]);
+              await idempotencyRepository.release(recordId);
             }
           } catch (updateErr) {
             logger.error({ updateErr, recordId }, 'Failed to record idempotency completion');
@@ -138,19 +111,14 @@ export function idempotency(options = { required: true }) {
       // 2. Key already exists in database (insert conflict). Run reaper only on conflict.
       await reapStaleProcessingKeys(60);
 
-      const existingRes = await query(
-        `
-        SELECT * FROM idempotency_keys
-        WHERE idempotency_key = $1
-          AND ($2::uuid IS NULL OR user_id = $2::uuid)
-          AND request_path = $3
-          AND request_method = $4
-        LIMIT 1;
-        `,
-        [trimmedKey, userId, requestPath, requestMethod]
-      );
+      const record = await idempotencyRepository.findByScope({
+        userId,
+        key: trimmedKey,
+        requestPath,
+        requestMethod,
+      });
 
-      if (existingRes.rows.length === 0) {
+      if (!record) {
         // Key exists under different scope/path
         return next(
           new IdempotencyKeyReusedError(
@@ -158,8 +126,6 @@ export function idempotency(options = { required: true }) {
           )
         );
       }
-
-      const record = existingRes.rows[0];
 
       // Verify request payload hash
       if (record.request_hash !== requestHash) {

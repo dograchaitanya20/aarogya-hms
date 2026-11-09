@@ -30,15 +30,12 @@ export function parseDurationToSeconds(durationStr) {
 
 // Validation function so it can also be tested explicitly in unit tests
 export function validateEnv(env = process.env) {
-  const isTest = env.NODE_ENV === 'test';
-
-  // 1. JWT_SECRET: strictly required outside tests (no hardcoded fallback in dev or prod)
-  if (!isTest) {
-    if (!env.JWT_SECRET || env.JWT_SECRET.trim().length < 32) {
-      throw new Error(
-        'FATAL: JWT_SECRET must be set and at least 32 characters long. Set it in .env (see .env.example).'
-      );
-    }
+  // 1. JWT_SECRET: required and >= 32 chars in EVERY environment. There is no fallback value anywhere in
+  // source; tests receive theirs from vitest.config.js and CI from the workflow env.
+  if (!env.JWT_SECRET || env.JWT_SECRET.trim().length < 32) {
+    throw new Error(
+      'FATAL: JWT_SECRET must be set and at least 32 characters long. Set it in .env (see .env.example).'
+    );
   }
 
   // 2. JWT_EXPIRES_IN: must not exceed 8 hours
@@ -51,7 +48,7 @@ export function validateEnv(env = process.env) {
   }
 
   return {
-    jwtSecret: isTest ? (env.JWT_SECRET || 'test-jwt-super-secret-key-min-32-chars-long') : env.JWT_SECRET,
+    jwtSecret: env.JWT_SECRET,
     jwtExpiresIn: expiryStr,
   };
 }
@@ -60,6 +57,8 @@ const validated = validateEnv(process.env);
 
 export const JWT_SECRET = validated.jwtSecret;
 export const JWT_EXPIRES_IN = validated.jwtExpiresIn;
+// Cookie signing secret: falls back to JWT_SECRET (never to a literal in source)
+export const COOKIE_SECRET = process.env.COOKIE_SECRET || validated.jwtSecret;
 export const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 export const BCRYPT_SALT_ROUNDS = 10;
 

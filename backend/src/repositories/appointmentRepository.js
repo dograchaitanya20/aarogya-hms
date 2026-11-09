@@ -220,10 +220,18 @@ export async function updateAppointmentStatus(
   return result.rows[0];
 }
 
+// Transaction-level advisory locks serialise concurrent bookings for the same doctor and the same
+// patient. Always doctor first, then patient: a fixed order means two requests can never deadlock.
+export async function lockBookingResources(client, doctorId, patientId) {
+  await client.query('SELECT pg_advisory_xact_lock(1, hashtext($1))', [doctorId]);
+  await client.query('SELECT pg_advisory_xact_lock(2, hashtext($1))', [patientId]);
+}
+
 export default {
   findAppointmentById,
   listAppointments,
   createAppointment,
   rescheduleAppointment,
   updateAppointmentStatus,
+  lockBookingResources,
 };

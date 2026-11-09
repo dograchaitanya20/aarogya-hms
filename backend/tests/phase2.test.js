@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import app from '../src/app.js';
 import { query } from '../src/config/db.js';
-import { loginAs } from './helpers.js';
+import { loginAs, deleteAppointmentsWhere } from './helpers.js';
 import { hospitalLocalToUtc } from '../src/utils/timezone.js';
 
 describe('Phase 2 Integration Tests: Appointments, Slots, RBAC & Concurrency', () => {
@@ -35,7 +35,7 @@ describe('Phase 2 Integration Tests: Appointments, Slots, RBAC & Concurrency', (
   });
 
   afterAll(async () => {
-    await query("DELETE FROM appointments WHERE reason_for_visit LIKE 'TEST-%'");
+    await deleteAppointmentsWhere("reason_for_visit LIKE 'TEST-%'");
   });
 
   describe('B1: Patient Double-Booking Exclusion Constraint', () => {

@@ -390,8 +390,8 @@ export async function runSeed(customDbUrl = null) {
         await client.query(
           `
           INSERT INTO invoice_items (invoice_id, description, quantity, unit_price_paise, total_paise)
-          VALUES ($1, 'Doctor Specialist Consultation', 1, $2, $2)
-          ON CONFLICT DO NOTHING;
+          SELECT $1::uuid, 'Doctor Specialist Consultation', 1, $2::bigint, $2::bigint
+          WHERE NOT EXISTS (SELECT 1 FROM invoice_items WHERE invoice_id = $1::uuid);
           `,
           [invId, subtotalPaise]
         );

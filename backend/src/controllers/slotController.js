@@ -1,10 +1,10 @@
 import slotService from '../services/slotService.js';
+import { parsePagination } from '../utils/pagination.js';
 
 export async function searchSlots(req, res, next) {
   try {
     const { doctorId, departmentId, from, to } = req.query;
-    const page = parseInt(req.query.page || '1', 10);
-    const pageSize = parseInt(req.query.pageSize || '50', 10);
+    const { page, pageSize } = parsePagination(req.query, 50);
 
     const result = await slotService.computeAvailableSlots({
       doctorId: doctorId || null,

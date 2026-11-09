@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { query, pool } from '../src/config/db.js';
+import { deleteAppointmentsWhere } from './helpers.js';
 
 describe('Database Integrity & Constraints', () => {
   let doctorId;
@@ -21,7 +22,7 @@ describe('Database Integrity & Constraints', () => {
   });
 
   afterAll(async () => {
-    await query("DELETE FROM appointments WHERE appointment_number LIKE 'TEST-APT-%'");
+    await deleteAppointmentsWhere("appointment_number LIKE 'TEST-APT-%'");
   });
 
   describe('PostgreSQL btree_gist Exclusion Constraint (Double-Booking Prevention)', () => {

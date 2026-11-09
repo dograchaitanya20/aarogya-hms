@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Aarogya HMS API
-  version: 1.1.0
+  version: 1.2.0
   description: Hospital Management System REST API with server-side RBAC, strict
     audit logging, btree_gist exclusion constraints against doctor/patient
     double-booking, and synthetic data only.
@@ -26,6 +26,23 @@ components:
       schema:
         type: string
       description: Unique key to ensure idempotent creation and prevent duplicate processing
+    PageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: 1-based page number. Invalid values are clamped, never an error.
+    PageSizeParam:
+      name: pageSize
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: Items per page (clamped to 1-100).
   schemas:
     ErrorResponse:
       type: object
@@ -85,131 +102,1891 @@ components:
         version:
           type: integer
           example: 1
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+      description: "Every list response is { data: [...], page, pageSize, total }"
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+      required:
+        - email
+        - password
+    BookAppointmentRequest:
+      type: object
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        doctorId:
+          type: string
+          format: uuid
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        reasonForVisit:
+          type: string
+      required:
+        - patientId
+        - doctorId
+        - startsAt
+        - endsAt
+    RescheduleRequest:
+      type: object
+      properties:
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        expectedVersion:
+          type: integer
+          minimum: 1
+          description: "Optimistic lock: 409 STALE_VERSION if the appointment changed
+            since you read it"
+      required:
+        - startsAt
+        - endsAt
+        - expectedVersion
+    StatusChangeRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - scheduled
+            - checked_in
+            - in_consultation
+            - completed
+            - cancelled
+            - no_show
+        cancellationReason:
+          type: string
+          description: Required when status is cancelled
+        expectedStatus:
+          type: string
+        expectedVersion:
+          type: integer
+      required:
+        - status
+    PatientCreate:
+      type: object
+      properties:
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 200
+        dateOfBirth:
+          type: string
+          format: date
+        gender:
+          type: string
+          enum:
+            - male
+            - female
+            - other
+        phone:
+          type: string
+          minLength: 5
+          maxLength: 30
+        email:
+          type: string
+          format: email
+        address:
+          type: string
+        emergencyContactName:
+          type: string
+        emergencyContactPhone:
+          type: string
+        bloodGroup:
+          type: string
+          enum:
+            - A+
+            - A-
+            - B+
+            - B-
+            - AB+
+            - AB-
+            - O+
+            - O-
+        allergies:
+          type: string
+      required:
+        - fullName
+        - dateOfBirth
+        - gender
+        - phone
+    PatientUpdate:
+      type: object
+      properties:
+        fullName:
+          type: string
+          minLength: 2
+          maxLength: 200
+        phone:
+          type: string
+          minLength: 5
+          maxLength: 30
+        email:
+          type: string
+          format: email
+        address:
+          type: string
+        emergencyContactName:
+          type: string
+        emergencyContactPhone:
+          type: string
+        bloodGroup:
+          type: string
+          enum:
+            - A+
+            - A-
+            - B+
+            - B-
+            - AB+
+            - AB-
+            - O+
+            - O-
+        allergies:
+          type: string
+      description: All fields optional; unknown fields (mrn, isActive, ...) are
+        rejected with 422
+    InvoiceCreate:
+      type: object
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        appointmentId:
+          type: string
+          format: uuid
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            properties:
+              description:
+                type: string
+              quantity:
+                type: integer
+                minimum: 1
+              unitPricePaise:
+                type: integer
+                minimum: 0
+                description: Integer paise (1 rupee = 100 paise). Never a float.
+            required:
+              - description
+              - quantity
+              - unitPricePaise
+        taxPaise:
+          type: integer
+          minimum: 0
+          description: Integer paise (1 rupee = 100 paise). Never a float.
+        discountPaise:
+          type: integer
+          minimum: 0
+          description: Integer paise (1 rupee = 100 paise). Never a float.
+      required:
+        - patientId
+        - items
+      description: "The server computes totals: subtotal = sum(quantity x
+        unitPricePaise), total = subtotal + tax - discount"
+    PaymentCreate:
+      type: object
+      properties:
+        amountPaise:
+          type: integer
+          minimum: 1
+        method:
+          type: string
+          enum:
+            - cash
+            - card
+            - upi
+            - net_banking
+        cardNumber:
+          type: string
+          description: Sandbox only. 4242424242424242 succeeds; 4000000000000002 and
+            4000000000009995 are declined. Only the last four digits are stored.
+      required:
+        - amountPaise
+        - method
+    CancelInvoiceRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 3
+      required:
+        - reason
+    ClinicalNoteCreate:
+      type: object
+      properties:
+        chiefComplaint:
+          type: string
+        symptoms:
+          type: string
+        clinicalExamination:
+          type: string
+        assessmentNotes:
+          type: string
+        plan:
+          type: string
+        diagnosisNotes:
+          type: string
+          description: Clinician-entered. The system never suggests or generates a
+            diagnosis.
+      required:
+        - chiefComplaint
+        - diagnosisNotes
+    PrescriptionCreate:
+      type: object
+      properties:
+        instructions:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            properties:
+              medicineName:
+                type: string
+              dosage:
+                type: string
+              frequency:
+                type: string
+              durationDays:
+                type: integer
+                minimum: 1
+                maximum: 365
+              instructions:
+                type: string
+            required:
+              - medicineName
+              - dosage
+              - frequency
+              - durationDays
+      required:
+        - items
+    DiagnosticReportCreate:
+      type: object
+      properties:
+        patientId:
+          type: string
+          format: uuid
+        encounterId:
+          type: string
+          format: uuid
+        testName:
+          type: string
+        category:
+          type: string
+          enum:
+            - radiology
+            - pathology
+            - cardiology
+            - other
+        reportDate:
+          type: string
+          format: date
+        fileName:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+            - cancelled
+        notes:
+          type: string
+      required:
+        - patientId
+        - testName
+        - category
+        - fileName
+      description: "Metadata only: file bytes are not stored"
+    DepartmentWrite:
+      type: object
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        description:
+          type: string
+        isActive:
+          type: boolean
+      description: name and code required on create
+    DoctorCreate:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        fullName:
+          type: string
+        phone:
+          type: string
+        departmentId:
+          type: string
+          format: uuid
+        specialization:
+          type: string
+        consultationFeePaise:
+          type: integer
+          minimum: 0
+          description: Integer paise (1 rupee = 100 paise). Never a float.
+        roomNumber:
+          type: string
+      required:
+        - email
+        - password
+        - fullName
+        - phone
+        - departmentId
+        - specialization
+        - consultationFeePaise
+    DoctorUpdate:
+      type: object
+      properties:
+        specialization:
+          type: string
+        consultationFeePaise:
+          type: integer
+          minimum: 0
+          description: Integer paise (1 rupee = 100 paise). Never a float.
+        roomNumber:
+          type: string
+        departmentId:
+          type: string
+          format: uuid
+        isActive:
+          type: boolean
+          description: false also disables the doctor's login
+    ScheduleWrite:
+      type: object
+      properties:
+        doctorId:
+          type: string
+          format: uuid
+        dayOfWeek:
+          type: integer
+          minimum: 0
+          maximum: 6
+        startTime:
+          type: string
+          example: 09:00
+        endTime:
+          type: string
+          example: 17:00
+        slotDurationMinutes:
+          type: integer
+          enum:
+            - 10
+            - 15
+            - 20
+            - 30
+            - 45
+            - 60
+        isActive:
+          type: boolean
+      description: Times are LOCAL hospital time (Asia/Kolkata). Overlapping rules for
+        one doctor and weekday are rejected with 409.
+    StaffCreate:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        fullName:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+          enum:
+            - front_desk
+            - admin
+      required:
+        - email
+        - password
+        - fullName
+        - phone
+        - role
+    StaffStatus:
+      type: object
+      properties:
+        isActive:
+          type: boolean
+      required:
+        - isActive
+  responses:
+    Unauthorized:
+      description: "401 UNAUTHORIZED: missing, invalid or expired session, or the
+        account was deactivated"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: "403 FORBIDDEN: the role may not do this. The denial is written to
+        the audit log."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: 404 NOT_FOUND
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ValidationError:
+      description: "422 VALIDATION_ERROR: body, query or path parameter failed validation"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: "409: state conflict (see error.code, e.g. SLOT_TAKEN,
+        STALE_VERSION, INVALID_TRANSITION)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
 paths:
-  /health:
+  /appointments:
     get:
-      summary: Health check endpoint
       tags:
-        - System
-      responses:
-        "200":
-          description: Service is healthy and database is connected
-  /auth/login:
-    post:
-      summary: Authenticate user and set session cookie
-      tags:
-        - Authentication
-      responses:
-        "200":
-          description: Authentication successful
-        "401":
-          description: Invalid credentials
-  /slots:
-    get:
-      summary: Search available slots aligned to schedule in hospital timezone
-      tags:
-        - Slots
+        - Appointments
+      summary: List appointments
+      description: "**Roles:** admin, clinician, front_desk. Clinicians see only their
+        own appointments."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: Filter by status
         - name: doctorId
           in: query
           schema:
             type: string
             format: uuid
+          description: Filter by doctor
+        - name: patientId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by patient
+        - name: from
+          in: query
+          schema:
+            type: string
+          description: From date
+        - name: to
+          in: query
+          schema:
+            type: string
+          description: To date
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search patient name, MRN or appointment number
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags:
+        - Appointments
+      summary: Book an appointment
+      description: "**Roles:** front_desk. 409 SLOT_TAKEN (doctor double-booked), 409
+        PATIENT_DOUBLE_BOOKED, 409 IDEMPOTENCY_IN_PROGRESS, 422
+        IDEMPOTENCY_KEY_REUSED. Enforced by database exclusion constraints, not
+        application checks."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BookAppointmentRequest"
+      responses:
+        "201":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /appointments/{id}:
+    get:
+      tags:
+        - Appointments
+      summary: Get one appointment
+      description: "**Roles:** admin, clinician, front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /appointments/{id}/reschedule:
+    patch:
+      tags:
+        - Appointments
+      summary: Reschedule (single transaction, optimistic version check)
+      description: "**Roles:** front_desk. 409 STALE_VERSION or SLOT_TAKEN; on failure
+        the original appointment is untouched."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RescheduleRequest"
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /appointments/{id}/status:
+    patch:
+      tags:
+        - Appointments
+      summary: Change status (state machine)
+      description: "**Roles:** front_desk, clinician. scheduled -> checked_in ->
+        in_consultation -> completed; scheduled/checked_in -> cancelled (reason
+        required); scheduled -> no_show. front_desk: check-in, cancel, no-show.
+        clinician: start and complete their own only. Starting a consultation
+        opens an encounter; completing it closes the encounter. 409
+        INVALID_TRANSITION otherwise."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StatusChangeRequest"
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /audit/logs:
+    get:
+      tags:
+        - Audit
+      summary: Append-only audit log
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: Exact action, e.g. CREATE_PAYMENT
+        - name: actorId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by actor user
+        - name: entityType
+          in: query
+          schema:
+            type: string
+          description: e.g. patient, invoice
+        - name: entityId
+          in: query
+          schema:
+            type: string
+          description: Entity id
+        - name: from
+          in: query
+          schema:
+            type: string
+          description: YYYY-MM-DD
+        - name: to
+          in: query
+          schema:
+            type: string
+          description: YYYY-MM-DD (inclusive)
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /auth/login:
+    post:
+      tags:
+        - Auth
+      summary: Sign in; sets an httpOnly session cookie
+      description: "Rate limited: 429 RATE_LIMIT_EXCEEDED after repeated attempts.
+        Failures are audited. Cookie is httpOnly, SameSite=Lax, Secure in
+        production; token lifetime is at most 8 hours."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          description: 429 RATE_LIMIT_EXCEEDED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /auth/logout:
+    post:
+      tags:
+        - Auth
+      summary: Sign out and clear the session cookie
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/me:
+    get:
+      tags:
+        - Auth
+      summary: Current user and role
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /billing/invoices:
+    get:
+      tags:
+        - Billing
+      summary: List invoices
+      description: "**Roles:** admin, front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: unpaid, partial, paid or cancelled
+        - name: patientId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by patient
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search invoice number, patient name or MRN
+        - name: from
+          in: query
+          schema:
+            type: string
+          description: Created from (ISO)
+        - name: to
+          in: query
+          schema:
+            type: string
+          description: Created before (ISO)
+        - name: sort
+          in: query
+          schema:
+            type: string
+          description: created_at, total_paise or invoice_number
+        - name: dir
+          in: query
+          schema:
+            type: string
+          description: asc or desc
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags:
+        - Billing
+      summary: Create invoice (totals computed server-side in paise)
+      description: "**Roles:** front_desk. 409 INVOICE_EXISTS: one active invoice per
+        appointment."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvoiceCreate"
+      responses:
+        "201":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /billing/invoices/{id}:
+    get:
+      tags:
+        - Billing
+      summary: Invoice with items, payments and reconciliation
+      description: "**Roles:** admin, front_desk. reconciliation.consistent is true
+        when items + tax - discount equals the total and the status matches the
+        successful payments."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /billing/invoices/{id}/cancel:
+    patch:
+      tags:
+        - Billing
+      summary: Cancel an unpaid invoice
+      description: "**Roles:** front_desk. 409 INVOICE_HAS_PAYMENTS if any payment
+        succeeded."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelInvoiceRequest"
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /billing/invoices/{id}/payments:
+    post:
+      tags:
+        - Billing
+      summary: Record a payment (simulated sandbox gateway)
+      description: "**Roles:** front_desk. 422 OVERPAYMENT_REJECTED if the amount
+        exceeds the balance (checked under a row lock, so concurrent payments
+        can never exceed the total). 402 PAYMENT_DECLINED is recorded but moves
+        no money. Use a NEW Idempotency-Key for each fresh attempt: a repeated
+        key replays the stored result."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentCreate"
+      responses:
+        "201":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          description: "402 PAYMENT_DECLINED: the sandbox gateway declined the card;
+            nothing was charged"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /clinical-notes/patients/{patientId}:
+    get:
+      tags:
+        - Clinical
+      summary: Clinical notes for a patient (audited read)
+      description: "**Roles:** clinician. Only a clinician who treats this patient.
+        Admin and front_desk get 403."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Patient UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /clinical/diagnostic-reports:
+    post:
+      tags:
+        - Clinical
+      summary: Record diagnostic report metadata
+      description: "**Roles:** clinician."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiagnosticReportCreate"
+      responses:
+        "201":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /clinical/encounters:
+    get:
+      tags:
+        - Clinical
+      summary: List encounters
+      description: "**Roles:** admin, clinician. Admin sees METADATA only (no clinical
+        content). Clinician sees their own encounters."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: patientId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by patient
+        - name: status
+          in: query
+          schema:
+            type: string
+          description: in_progress or completed
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /clinical/encounters/{encounterId}/notes:
+    post:
+      tags:
+        - Clinical
+      summary: Add a clinician-entered note
+      description: "**Roles:** clinician. Own, open encounter only (409
+        ENCOUNTER_CLOSED otherwise). The audit log records IDs, never the note
+        text."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: encounterId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Encounter UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClinicalNoteCreate"
+      responses:
+        "201":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /clinical/encounters/{encounterId}/prescriptions:
+    post:
+      tags:
+        - Clinical
+      summary: Add a prescription with items
+      description: "**Roles:** clinician. No drug-interaction or dosing advice is
+        generated; prescribing is entirely the clinician's judgment."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: encounterId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Encounter UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrescriptionCreate"
+      responses:
+        "201":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /clinical/patients/{patientId}/records:
+    get:
+      tags:
+        - Clinical
+      summary: Full clinical record (encounters, notes, prescriptions, reports)
+      description: "**Roles:** clinician. Only a clinician who treats this patient;
+        audited as READ_CLINICAL_RECORD."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Patient UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /directory/departments:
+    get:
+      tags:
+        - Directory
+      summary: List departments
+      description: "**Roles:** admin, clinician, front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags:
+        - Directory
+      summary: Create department
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepartmentWrite"
+      responses:
+        "201":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /directory/departments/{id}:
+    patch:
+      tags:
+        - Directory
+      summary: Update department
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepartmentWrite"
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags:
+        - Directory
+      summary: Deactivate department (soft delete)
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /directory/doctors:
+    get:
+      tags:
+        - Directory
+      summary: List doctors
+      description: "**Roles:** admin, clinician, front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
         - name: departmentId
           in: query
           schema:
             type: string
             format: uuid
-        - name: from
+          description: Filter by department
+        - name: q
           in: query
-          required: true
           schema:
             type: string
-            example: 2027-01-11
-        - name: to
+          description: Search name or specialization
+        - name: isActive
           in: query
-          required: true
           schema:
-            type: string
-            example: 2027-01-12
+            type: boolean
+          description: Default true
       responses:
         "200":
-          description: Available slots computed in Asia/Kolkata
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "422":
-          description: Range exceeds 14 days or invalid format
-  /appointments:
+          $ref: "#/components/responses/ValidationError"
     post:
-      summary: Book a new appointment (Front Desk only; requires Idempotency-Key)
       tags:
-        - Appointments
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
+        - Directory
+      summary: Create doctor (login account and profile in one transaction)
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DoctorCreate"
       responses:
         "201":
-          description: Appointment booked
-        "409":
-          description: SLOT_TAKEN or PATIENT_DOUBLE_BOOKED
-        "422":
-          description: VALIDATION_ERROR or IDEMPOTENCY_KEY_REUSED
-    get:
-      summary: List appointments with filters and pagination
-      tags:
-        - Appointments
-      responses:
-        "200":
-          description: Paginated list of appointments
-  /appointments/{id}/reschedule:
-    patch:
-      summary: Reschedule appointment with optimistic locking version check
-      tags:
-        - Appointments
-      responses:
-        "200":
-          description: Reschedule successful
-        "409":
-          description: STALE_VERSION or SLOT_TAKEN
-  /appointments/{id}/status:
-    patch:
-      summary: Transition appointment status (State Machine enforcement)
-      tags:
-        - Appointments
-      responses:
-        "200":
-          description: Status updated
-        "409":
-          description: INVALID_TRANSITION
-  /patients/{id}:
-    put:
-      summary: Update patient demographics (Front Desk only; audited before/after)
-      tags:
-        - Patients
-      responses:
-        "200":
-          description: Patient updated
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "403":
-          description: Forbidden
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /directory/doctors/{doctorId}/schedules:
+    get:
+      tags:
+        - Directory
+      summary: List a doctor's weekly schedule rules
+      description: "**Roles:** admin, clinician, front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: doctorId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Doctor UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /directory/doctors/{id}:
+    get:
+      tags:
+        - Directory
+      summary: Get one doctor
+      description: "**Roles:** admin, clinician, front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags:
+        - Directory
+      summary: Update doctor
+      description: "**Roles:** admin. Setting isActive keeps the login account in
+        step: a deactivated doctor can no longer sign in and existing sessions
+        stop working."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DoctorUpdate"
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      tags:
+        - Directory
+      summary: Deactivate doctor and revoke access
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /directory/schedules:
     post:
-      summary: Create doctor schedule rule with overlap checks (Admin only)
       tags:
         - Directory
+      summary: Create schedule rule (overlap checked)
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleWrite"
       responses:
         "201":
-          description: Schedule created
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
-          description: Overlapping schedule conflict
-  /directory/staff:
-    get:
-      summary: List staff users without password hashes (Admin only)
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /directory/schedules/{id}:
+    patch:
       tags:
         - Directory
+      summary: Update schedule rule
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleWrite"
       responses:
         "200":
-          description: Staff list
-    post:
-      summary: Create staff user with bcrypt hashing (Admin only)
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    delete:
       tags:
         - Directory
+      summary: Delete schedule rule
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /directory/staff:
+    get:
+      tags:
+        - Directory
+      summary: List staff users (never returns password hashes)
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: role
+          in: query
+          schema:
+            type: string
+          description: Filter by role
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search name or email
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags:
+        - Directory
+      summary: Create staff user (bcrypt-hashed password)
+      description: "**Roles:** admin."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffCreate"
       responses:
         "201":
-          description: Staff created
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /directory/staff/{id}/status:
+    patch:
+      tags:
+        - Directory
+      summary: Activate or deactivate a staff user
+      description: "**Roles:** admin. An admin cannot deactivate their own account
+        (409 CANNOT_DEACTIVATE_SELF)."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffStatus"
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /doctors/{id}/slots:
+    get:
+      tags:
+        - Slots
+      summary: Available slots for one doctor on a date
+      description: "**Roles:** admin, clinician, front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Doctor UUID
+        - name: date
+          in: query
+          schema:
+            type: string
+          description: YYYY-MM-DD, hospital local
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /health:
+    get:
+      tags:
+        - System
+      summary: Liveness and database connectivity
+      responses:
+        "200":
+          description: API and database are up (503 if the database is unreachable)
+  /patients:
+    get:
+      tags:
+        - Patients
+      summary: List and search patients
+      description: "**Roles:** admin, clinician, front_desk. Clinicians only see
+        patients they have an appointment or encounter with. Every list read is
+        audited."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search name, MRN or phone
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+    post:
+      tags:
+        - Patients
+      summary: Register a patient
+      description: "**Roles:** front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientCreate"
+      responses:
+        "201":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /patients/{id}:
+    get:
+      tags:
+        - Patients
+      summary: Get one patient (audited read)
+      description: "**Roles:** admin, clinician, front_desk. A clinician without a
+        relationship to this patient gets 403, and the attempt is audited."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags:
+        - Patients
+      summary: Update patient demographics (before/after audited)
+      description: "**Roles:** front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Resource UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientUpdate"
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /reports/summary:
+    get:
+      tags:
+        - Reports
+      summary: Operational and financial summary (hospital-local date range)
+      description: "**Roles:** admin. All money in integer paise. Aggregates only: no
+        patient-identifying or clinical content."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+          description: "YYYY-MM-DD (default: 29 days before 'to')"
+        - name: to
+          in: query
+          schema:
+            type: string
+          description: "YYYY-MM-DD (default: today); range at most 366 days"
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /slots:
+    get:
+      tags:
+        - Slots
+      summary: Search available slots
+      description: "**Roles:** admin, clinician, front_desk. Computed from doctor
+        schedules in Asia/Kolkata minus active appointments, excluding past
+        slots."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+          description: Start (YYYY-MM-DD, hospital local)
+        - name: to
+          in: query
+          schema:
+            type: string
+          description: End (YYYY-MM-DD); range at most 14 days
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: doctorId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by doctor
+        - name: departmentId
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by department
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+  /slots/doctors/{id}/slots:
+    get:
+      tags:
+        - Slots
+      summary: Available slots for one doctor on a date (alias)
+      description: "**Roles:** admin, clinician, front_desk."
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Doctor UUID
+        - name: date
+          in: query
+          schema:
+            type: string
+          description: YYYY-MM-DD, hospital local
+      responses:
+        "200":
+          description: Success
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+tags:
+  - name: System
+  - name: Auth
+  - name: Directory
+  - name: Patients
+  - name: Slots
+  - name: Appointments
+  - name: Clinical
+  - name: Billing
+  - name: Reports
+  - name: Audit

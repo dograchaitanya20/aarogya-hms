@@ -31,7 +31,7 @@ erDiagram
     patients ||--o{ diagnostic_reports : "subject"
     patients ||--o{ invoices : "billed to"
 
-    appointments ||--o| encounters : "realizes"
+    appointments |o--o| encounters : "realizes (optional: walk-in/emergency encounters have no appointment)"
     appointments ||--o| invoices : "originates"
 
     encounters ||--o{ clinical_notes : "contains"
@@ -128,7 +128,7 @@ erDiagram
 
     encounters {
         uuid id PK
-        uuid appointment_id FK,UK
+        uuid appointment_id FK,UK "nullable since migration 005"
         uuid patient_id FK
         uuid doctor_id FK
         timestamptz started_at
@@ -278,7 +278,7 @@ erDiagram
    ```
    Enforced at the storage engine level. Prevents a single patient from holding overlapping appointments with multiple doctors simultaneously. Violation raises SQLSTATE `23P01` and is mapped to HTTP 409 `PATIENT_DOUBLE_BOOKED`.
 
-2. **Immutable Audit Log**:
+3. **Immutable Audit Log**:
    ```sql
    CREATE TRIGGER trg_audit_log_append_only
    BEFORE UPDATE OR DELETE ON audit_log
@@ -287,9 +287,17 @@ erDiagram
    ```
    Guarantees non-repudiation and tampering resistance. Any SQL `UPDATE` or `DELETE` attempt throws SQLSTATE `55000`.
 
-3. **Strict Monetary Accounting**:
+4. **Strict Monetary Accounting**:
    All money stored in integer paise. Negative balances and discounts are strictly forbidden via DB check constraints:
    ```sql
    CONSTRAINT chk_invoice_math CHECK (total_paise = subtotal_paise + tax_paise - discount_paise)
    CONSTRAINT chk_item_total CHECK (total_paise = quantity * unit_price_paise)
    ```
+
+## Later Migrations (003-007)
+
+- **003 `idempotency_user_scope`**: idempotency keys are unique per `(user_id, request_method, request_path, idempotency_key)` (`UNIQUE NULLS NOT DISTINCT`) instead of globally, so one user can never replay another user's stored response.
+- **004 `sequences_for_mrn_and_appointments`**: `seq_patient_mrn` and `seq_appointment_number` generate MRNs (`MRN-YYYY-NNNNNN`) and appointment numbers (`APT-YYYY-NNNNNN`) atomically in the database. Random application-side numbers could collide under concurrent inserts.
+- **005 `nullable_encounter_appointment`**: `encounters.appointment_id` is now nullable. **This is a deliberate design change, not a loosened safety rule**: walk-in and emergency patients are seen without a prior appointment. The `UNIQUE` on `appointment_id` is kept, so an appointment can still produce at most one encounter. Clinician-to-patient access (`checkClinicianPatientAccess` and the patient list filter) therefore checks appointments **or** encounters, and the two code paths use the same rule.
+- **006 `billing_sequences_and_invoice_uniqueness`**: `seq_invoice_number` and `seq_payment_number` generate `INV-YYYY-NNNNNN` and `PAY-YYYY-NNNNNN` atomically. A **partial unique index** `uq_invoice_one_per_appointment` allows only one non-cancelled invoice per appointment (cancelling an invoice frees the appointment for re-invoicing). Adds `invoices.cancellation_reason`.
+- **007 `dedupe_seeded_invoice_items`**: data repair only. An older seed inserted the same invoice line item again on every run (`ON CONFLICT DO NOTHING` had no unique key to conflict on). The seed is fixed; this migration deletes the extra copies from existing databases, scoped to the seed's own line item.

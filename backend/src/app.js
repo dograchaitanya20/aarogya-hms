@@ -13,6 +13,7 @@ import errorHandler from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import { NotFoundError } from './errors/AppError.js';
 import apiRoutes from './routes/index.js';
+import { COOKIE_SECRET } from './config/env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,7 +43,7 @@ app.use(
 // Body Parsers (strict size limits to prevent body-inflation DoS) & Cookie Parser
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
-app.use(cookieParser(process.env.COOKIE_SECRET || 'dev-cookie-secret-key-change-in-production'));
+app.use(cookieParser(COOKIE_SECRET));
 
 // Request ID and Request Logging
 app.use(requestId);

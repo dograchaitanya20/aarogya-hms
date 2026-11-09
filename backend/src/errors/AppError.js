@@ -74,3 +74,9 @@ export class IdempotencyInProgressError extends ConflictError {
     super(message, 'IDEMPOTENCY_IN_PROGRESS', details);
   }
 }
+
+export class OverpaymentRejectedError extends AppError {
+  constructor(message = 'Payment exceeds the outstanding invoice balance and was rejected', details = {}) {
+    super(message, 422, 'OVERPAYMENT_REJECTED', details);
+  }
+}

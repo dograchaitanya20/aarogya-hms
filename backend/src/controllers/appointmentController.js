@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import appointmentService from '../services/appointmentService.js';
+import { parsePagination } from '../utils/pagination.js';
 
 const bookSchema = z.object({
   patientId: z.string().uuid('Valid patient UUID required'),
@@ -47,8 +48,7 @@ export async function book(req, res, next) {
 export async function list(req, res, next) {
   try {
     const { status, doctorId, patientId, from, to, q } = req.query;
-    const page = parseInt(req.query.page || '1', 10);
-    const pageSize = parseInt(req.query.pageSize || '20', 10);
+    const { page, pageSize } = parsePagination(req.query, 20);
 
     const result = await appointmentService.getAppointments(
       { status, doctorId, patientId, from, to, q, page, pageSize },

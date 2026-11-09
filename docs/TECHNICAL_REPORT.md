@@ -108,22 +108,52 @@ The relational schema comprises 18 tables defined in native SQL DDL:
   - `tests/db.test.js`: Direct SQL tests verifying the `btree_gist` exclusion constraint, partial overlaps, adjacent back-to-back slot boundaries, and audit log append-only triggers.
   - `tests/auth.test.js`: Health check, valid login, invalid password, nonexistent email, unauthenticated access, inactive user rejection, and cookie clearing on logout.
   - `tests/rbac.test.js`: Full matrix coverage verifying at least one allowed and one denied operation per role (`admin`, `clinician`, `front_desk`) across resources (`directory`, `patients`, `clinical_notes`, `billing`, `audit_logs`), plus verification of audit log emission on 403 denials.
+  - `tests/phase2.test.js`, `tests/phase2-fixes.test.js`: booking rules, slot engine, state machine, optimistic locking, idempotency, advisory-lock concurrency (20 simultaneous bookings, 10 same-key requests, 5 colliding reschedules), transactional audit rollback, access control per role.
+  - `tests/phase3-clinical-billing.test.js`: encounter lifecycle, clinical notes/prescriptions/reports and their privacy rules, invoices and payments (including 10 concurrent payments and 10 concurrent same-key payments), reconciliation, doctor access revocation, atomic account creation, pagination clamping, reports (checked against independent SQL), audit viewer.
+  - `tests/architecture.test.js`: fails the build if SQL or a database import appears outside repositories, if a secret fallback literal appears in source, or if `console.*` is used instead of the structured logger.
+  - `tests/openapi-coverage.test.js`: walks Express's real router and fails if any route is undocumented, any documented route does not exist, or `docs/openapi.yaml` drifts from its JSON source.
+- **Proof tests have teeth**: the audit-atomicity and doctor-revocation tests were each run once against deliberately re-broken code and failed, then passed again after restoring it (see `TEST_EVIDENCE.md`).
 
 ---
 
-## 8. Trade-offs & Known Limitations
-1. **Single Hospital Campus Timezone**: The system assumes a single primary hospital operating under `Asia/Kolkata` (IST, UTC+05:30). All slot computations and schedule alignment rules are evaluated in IST and stored as UTC `TIMESTAMPTZ`. Multi-facility hospital chains spanning multiple distinct timezones would require facility-level timezone schema columns.
-2. **In-Memory Rate Limiting**: The Express rate limiters (`apiLimiter`, `loginLimiter`) operate in Node.js process memory. In a multi-replica clustered production deployment, a distributed Redis-backed store (`rate-limit-redis`) is required to synchronize rate-limit windows across nodes.
-3. **Database Connection Pooling Scale**: PostgreSQL pool is sized to 20 connections for local development and test concurrency. For enterprise deployments handling thousands of concurrent staff, an external pooler such as PgBouncer or Supavisor is recommended in transaction pooling mode.
-4. **Binary Asset Storage**: Diagnostic report records store clinical metadata (patient, doctor, test type, results summary, status, timestamps). Large binary payloads (DICOM image stacks, high-res pathology slides, multi-page PDFs) are intentionally kept out of relational tables; an object store (S3/GCS/MinIO) with pre-signed upload/download URLs should be integrated for blob streaming.
-5. **Simulated Payment Gateway**: Billing computes integer paise totals, tax, discount, and reconciles against successful payment records, rejecting overpayments. Payment processing is simulated for assessment safety without requiring third-party credentials or paid gateways; live production would integrate webhooks (Razorpay/Stripe) with HMAC SHA-256 signature verification.
-6. **Appointment Cancellation Workflow**: Clinicians are strictly restricted from cancelling appointments directly (`403 FORBIDDEN`) to maintain front-desk scheduling integrity and avoid orphaned clinical slots; clinician schedule changes or cancellations must be coordinated through administrative front-desk staff.
-7. **Idempotency In-Progress Locking**: When duplicate HTTP requests with the exact same Idempotency-Key arrive while the initial transaction is still executing, the secondary request receives 409 `IDEMPOTENCY_IN_PROGRESS` rather than waiting on database lock queues. Once committed, subsequent requests receive the cached result.
-8. **No Algorithmic Clinical Decision Support**: Per non-negotiable requirements, the system strictly disallows automated diagnosis or drug-drug interaction warnings; prescription accuracy relies entirely on treating clinician judgment.
+## 8. Billing, Clinical Records & Reporting
+
+### Billing (`/billing`)
+- **Money is integer paise end to end.** Request schemas reject fractions and negatives; the database stores `BIGINT`; responses convert to JSON numbers. Totals are computed on the server (`subtotal = sum(quantity x unit price)`, `total = subtotal + tax - discount`) and a discount larger than subtotal plus tax is a 422.
+- **Overpayment cannot happen, even concurrently.** Taking a payment locks the invoice row (`SELECT ... FOR UPDATE`), sums successful payments, and rejects with `422 OVERPAYMENT_REJECTED` if the amount exceeds the balance. A test fires 10 concurrent payments of 40 % of an invoice: exactly 2 succeed and the paid total is 80 %.
+- **Reconciliation is a first-class output.** `GET /billing/invoices/:id` returns `reconciliation.consistent`, true only when items + tax - discount equals the stored total and the stored status equals the status derived from successful payments. A test checks every seeded invoice.
+- **One live invoice per appointment** (partial unique index, cancelled invoices excluded) prevents double billing.
+- **Simulated gateway, safe by construction.** A declined card is recorded (`402 PAYMENT_DECLINED`) but moves no money. Only the last four digits are stored; tests assert the full number appears in no table, audit entry or response.
+- Invoice creation and payments require an `Idempotency-Key`. Writes are front_desk only; admin is read-only; clinicians get 403 and the denial is audited.
+
+### Clinical records (`/clinical`)
+- Starting a consultation opens an **encounter** and completing it closes it, inside the same transaction as the status change (one encounter per appointment is a database `UNIQUE`).
+- Notes, prescriptions and diagnostic-report metadata are written by clinicians only, only into their own open encounter (`409 ENCOUNTER_CLOSED` afterwards). The system never generates diagnoses or drug advice.
+- **The audit log must not become a side channel.** Admins can read audit entries but must not read clinical content, so clinical audit entries hold ids and counts only. A test writes a unique marker into a note and asserts it appears in no audit row.
+- Admin can list encounters as metadata (the query never joins clinical tables). The full record endpoint is clinician-with-relationship only and is itself audited.
+
+### Reports and audit viewer
+- `GET /reports/summary` (admin): appointments by status, revenue by method and by day, billed vs outstanding, declined payments and top doctors, over a hospital-local date range (max 366 days). Tests compare every figure with an independent SQL calculation that does its own timezone arithmetic.
+- `GET /audit/logs` (admin): paginated with a total, filterable by actor, action, entity and date. The table stays append-only (triggers reject UPDATE and DELETE; tested).
+
+### Access revocation and account integrity
+- Deactivating a doctor also disables the linked login, and the session lookup refuses a doctor profile that is inactive, so existing sessions die immediately. (An earlier version only flipped the doctor flag; a removed doctor could keep signing in.)
+- Creating a doctor writes the login, the profile and the audit entry in one transaction, so a failure cannot leave a clinician login with no doctor profile.
+- An admin cannot deactivate their own account.
+
+### Layering and consistency
+- Controllers validate with Zod, services hold rules and transactions, repositories hold all SQL (enforced by `architecture.test.js`). A shared `withTransaction` helper keeps BEGIN/COMMIT/ROLLBACK in one place.
+- Every list endpoint clamps `page` and `pageSize` (1-100); garbage input never reaches SQL.
+- Seed data is idempotent: a bug where every re-seed duplicated invoice line items (so totals no longer matched their items) was found by the reconciliation test and fixed; migration 007 repairs databases already affected.
 
 ---
 
-## 9. AI Tools & Attribution
+## 9. Trade-offs & Known Limitations
+The authoritative list lives in the README (**Known Limitations & Assumptions**) so it cannot drift. In summary: no web UI yet; payments are a sandbox simulation without refunds; tax and discounts are plain amounts; diagnostic reports are metadata only; no structured vitals; deactivating a doctor does not reassign future appointments; idempotency replays 4xx results too; no password reset or MFA; in-memory rate limiting; single hospital timezone; `ILIKE` search; pool of 20 per process.
+
+---
+
+## 10. AI Tools & Attribution
 - Built with Antigravity AI pair programming agent.
 - Code conforms to human-explainable, clean ES module patterns with zero hidden dependencies.
 - Third-party packages: Express, pg, bcrypt, jsonwebtoken, zod, helmet, cors, express-rate-limit, pino, swagger-ui-express, yaml, vitest, supertest.

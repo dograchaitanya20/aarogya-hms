@@ -66,7 +66,29 @@ export function errorHandler(err, req, res, next) {
     });
   }
 
+  // Malformed UUID in a path/query parameter (SQLSTATE 22P02) is a client error, not a server error
+  if (err.code === '22P02') {
+    return res.status(422).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'A path or query parameter has an invalid format (expected a UUID or valid value)',
+        details: {},
+        requestId,
+      },
+    });
+  }
+
   // 4. PostgreSQL Unique Constraint Violation (SQLSTATE 23505)
+  if (err.code === '23505' && err.constraint === 'uq_invoice_one_per_appointment') {
+    return res.status(409).json({
+      error: {
+        code: 'INVOICE_EXISTS',
+        message: 'This appointment already has an active invoice',
+        details: {},
+        requestId,
+      },
+    });
+  }
   if (err.code === '23505') {
     return res.status(409).json({
       error: {

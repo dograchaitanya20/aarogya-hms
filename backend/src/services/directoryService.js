@@ -3,7 +3,8 @@ import departmentRepository from '../repositories/departmentRepository.js';
 import doctorRepository from '../repositories/doctorRepository.js';
 import scheduleRepository from '../repositories/scheduleRepository.js';
 import auditService from './auditService.js';
-import { query } from '../config/db.js';
+import userRepository from '../repositories/userRepository.js';
+import { withTransaction } from '../utils/transaction.js';
 import {
   ValidationError,
   NotFoundError,
@@ -50,54 +51,44 @@ export async function createDoctorWithUser({
   user,
   reqMeta,
 }) {
-  const existingUserRes = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-  if (existingUserRes.rows.length > 0) {
+  if (await userRepository.emailExists(email)) {
     throw new ConflictError(`User with email '${email}' already exists.`);
   }
 
-  const dept = await query('SELECT id FROM departments WHERE id = $1', [departmentId]);
-  if (dept.rows.length === 0) {
+  const dept = await departmentRepository.getDepartmentById(departmentId);
+  if (!dept) {
     throw new NotFoundError(`Department with ID '${departmentId}' not found.`);
   }
 
   const passwordHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 
-  // Single transaction: create user with role 'clinician' and doctor profile
-  const userRes = await query(
-    `
-    INSERT INTO users (email, password_hash, role, full_name, phone)
-    VALUES ($1, $2, 'clinician', $3, $4)
-    RETURNING id, email, role, full_name, phone;
-    `,
-    [email, passwordHash, fullName, phone]
-  );
-  const newUser = userRes.rows[0];
-
-  const doctor = await doctorRepository.createDoctor({
-    userId: newUser.id,
-    departmentId,
-    specialization,
-    consultationFeePaise,
-    roomNumber,
+  // ONE transaction: the login account, the doctor profile and the audit entry succeed or fail together.
+  // (Otherwise a failure after the first insert would leave a clinician login with no doctor profile.)
+  return withTransaction(async (client) => {
+    const newUser = await userRepository.createUser(
+      { email, passwordHash, role: 'clinician', fullName, phone },
+      client
+    );
+    const doctor = await doctorRepository.createDoctor(
+      { userId: newUser.id, departmentId, specialization, consultationFeePaise, roomNumber },
+      client
+    );
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'CREATE_DOCTOR',
+        entityType: 'doctor',
+        entityId: doctor.id,
+        afterState: { doctorId: doctor.id, userId: newUser.id, email: newUser.email },
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+    return { ...doctor, doctor_name: newUser.full_name, email: newUser.email };
   });
-
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: 'CREATE_DOCTOR',
-    entityType: 'doctor',
-    entityId: doctor.id,
-    afterState: { doctorId: doctor.id, userId: newUser.id, email: newUser.email },
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
-  });
-
-  return {
-    ...doctor,
-    doctor_name: newUser.full_name,
-    email: newUser.email,
-  };
 }
 
 export async function createScheduleRule({
@@ -174,108 +165,64 @@ export async function createStaffUser({ email, password, fullName, phone, role, 
     throw new ValidationError("Staff role must be either 'front_desk' or 'admin'.");
   }
 
-  const existingRes = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-  if (existingRes.rows.length > 0) {
+  if (await userRepository.emailExists(email)) {
     throw new ConflictError(`User with email '${email}' already exists.`);
   }
 
   const passwordHash = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 
-  const res = await query(
-    `
-    INSERT INTO users (email, password_hash, role, full_name, phone)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING id, email, role, full_name, phone, is_active, created_at;
-    `,
-    [email, passwordHash, role, fullName, phone]
-  );
-  const createdStaff = res.rows[0];
-
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: 'CREATE_STAFF_USER',
-    entityType: 'user',
-    entityId: createdStaff.id,
-    afterState: createdStaff,
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
+  return withTransaction(async (client) => {
+    const createdStaff = await userRepository.createUser({ email, passwordHash, role, fullName, phone }, client);
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'CREATE_STAFF_USER',
+        entityType: 'user',
+        entityId: createdStaff.id,
+        afterState: createdStaff,
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+    return createdStaff;
   });
-
-  return createdStaff;
 }
 
 export async function setStaffActiveStatus({ id, isActive, user, reqMeta }) {
-  const currentRes = await query('SELECT id, email, role, is_active FROM users WHERE id = $1', [id]);
-  if (currentRes.rows.length === 0) {
-    throw new NotFoundError(`User with ID '${id}' not found.`);
+  if (id === user.id && !isActive) {
+    throw new ConflictError('You cannot deactivate your own account.', 'CANNOT_DEACTIVATE_SELF');
   }
 
-  const res = await query(
-    `
-    UPDATE users
-    SET is_active = $2, updated_at = clock_timestamp()
-    WHERE id = $1
-    RETURNING id, email, role, full_name, phone, is_active, updated_at;
-    `,
-    [id, Boolean(isActive)]
-  );
-
-  const updatedStaff = res.rows[0];
-
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: 'UPDATE_STAFF_STATUS',
-    entityType: 'user',
-    entityId: id,
-    beforeState: currentRes.rows[0],
-    afterState: updatedStaff,
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
+  return withTransaction(async (client) => {
+    const current = await userRepository.findStaffForUpdate(id, client);
+    if (!current) {
+      throw new NotFoundError(`User with ID '${id}' not found.`);
+    }
+    const updatedStaff = await userRepository.setActive(id, isActive, client);
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'UPDATE_STAFF_STATUS',
+        entityType: 'user',
+        entityId: id,
+        beforeState: current,
+        afterState: updatedStaff,
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+    return updatedStaff;
   });
-
-  return updatedStaff;
 }
 
-export async function listStaff({ role = null, page = 1, pageSize = 20, q = '' }) {
-  const offset = (page - 1) * pageSize;
-  let sql = 'SELECT id, email, role, full_name, phone, is_active, created_at FROM users WHERE 1=1';
-  const values = [];
-
-  if (role) {
-    values.push(role);
-    sql += ` AND role = $${values.length}`;
-  }
-
-  if (q && q.trim()) {
-    values.push(`%${q.trim()}%`);
-    sql += ` AND (full_name ILIKE $${values.length} OR email ILIKE $${values.length})`;
-  }
-
-  const countRes = await query(
-    sql.replace(
-      'SELECT id, email, role, full_name, phone, is_active, created_at',
-      'SELECT COUNT(*) as total'
-    ),
-    values
-  );
-  const total = parseInt(countRes.rows[0].total, 10);
-
-  values.push(pageSize);
-  sql += ` ORDER BY created_at DESC LIMIT $${values.length}`;
-  values.push(offset);
-  sql += ` OFFSET $${values.length}`;
-
-  const result = await query(sql, values);
-  return {
-    data: result.rows,
-    page,
-    pageSize,
-    total,
-  };
+export async function listStaff(filters) {
+  return userRepository.listStaff(filters);
 }
 
 export async function getDoctorById(id) {
@@ -333,20 +280,29 @@ export async function updateDoctor(id, updates, { user, reqMeta }) {
   if (!current) {
     throw new NotFoundError(`Doctor with ID '${id}' not found.`);
   }
-  const updated = await doctorRepository.updateDoctor(id, updates);
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: 'UPDATE_DOCTOR',
-    entityType: 'doctor',
-    entityId: id,
-    beforeState: current,
-    afterState: updated,
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
+  return withTransaction(async (client) => {
+    const updated = await doctorRepository.updateDoctor(id, updates, client);
+    // Access follows status: a deactivated doctor's login stops working, a reactivated one's resumes
+    if (updates.isActive !== undefined) {
+      await userRepository.setActive(current.user_id, updates.isActive, client);
+    }
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'UPDATE_DOCTOR',
+        entityType: 'doctor',
+        entityId: id,
+        beforeState: current,
+        afterState: updated,
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+    return updated;
   });
-  return updated;
 }
 
 export async function deleteDoctor(id, { user, reqMeta }) {
@@ -354,20 +310,27 @@ export async function deleteDoctor(id, { user, reqMeta }) {
   if (!current) {
     throw new NotFoundError(`Doctor with ID '${id}' not found.`);
   }
-  const deleted = await doctorRepository.deleteDoctor(id);
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: 'DELETE_DOCTOR',
-    entityType: 'doctor',
-    entityId: id,
-    beforeState: current,
-    afterState: deleted,
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
+  return withTransaction(async (client) => {
+    const deleted = await doctorRepository.deleteDoctor(id, client);
+    // Revoke access: without this the removed doctor could still sign in and read their patients
+    await userRepository.setActive(current.user_id, false, client);
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'DELETE_DOCTOR',
+        entityType: 'doctor',
+        entityId: id,
+        beforeState: current,
+        afterState: deleted,
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+    return deleted;
   });
-  return deleted;
 }
 
 export async function updateSchedule(id, updates, { user, reqMeta }) {

@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import request from 'supertest';
 import app from '../src/app.js';
+import auditService from '../src/services/auditService.js';
 import { query, getClient } from '../src/config/db.js';
-import { loginAs, getTestDoctorAndPatients } from './helpers.js';
+import { loginAs, getTestDoctorAndPatients, deleteAppointmentsWhere } from './helpers.js';
 import {
   hospitalLocalToUtc,
   utcToHospitalTimeStr,
@@ -133,10 +134,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotBlockBStart = hospitalLocalToUtc(targetSunday, '14:30:00').toISOString();
       const slotBlockBEnd = hospitalLocalToUtc(targetSunday, '14:45:00').toISOString();
 
-      await query(
-        'DELETE FROM appointments WHERE (doctor_id = $1 OR patient_id = $2) AND starts_at = $3;',
-        [doctor2.id, patient.id, slotBlockBStart]
-      );
+      await deleteAppointmentsWhere('(doctor_id = $1 OR patient_id = $2) AND starts_at = $3', [doctor2.id, patient.id, slotBlockBStart]);
 
       // Booking in Block B must succeed
       const resSuccess = await request(app)
@@ -186,7 +184,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotStart = hospitalLocalToUtc(targetDate, '09:00:00').toISOString();
       const slotEnd = hospitalLocalToUtc(targetDate, '09:15:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE (doctor_id = $1 OR patient_id = $2) AND starts_at = $3;', [
+      await deleteAppointmentsWhere('(doctor_id = $1 OR patient_id = $2) AND starts_at = $3', [
         doctor1.id,
         patient.id,
         slotStart,
@@ -222,7 +220,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotStart = hospitalLocalToUtc(targetDate, '09:15:00').toISOString();
       const slotEnd = hospitalLocalToUtc(targetDate, '09:30:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE (doctor_id = $1 OR patient_id = $2) AND starts_at = $3;', [
+      await deleteAppointmentsWhere('(doctor_id = $1 OR patient_id = $2) AND starts_at = $3', [
         doctor1.id,
         patient.id,
         slotStart,
@@ -273,7 +271,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotStart = hospitalLocalToUtc(targetDate, '09:30:00').toISOString();
       const slotEnd = hospitalLocalToUtc(targetDate, '09:45:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE (doctor_id = $1 OR patient_id = $2) AND starts_at = $3;', [
+      await deleteAppointmentsWhere('(doctor_id = $1 OR patient_id = $2) AND starts_at = $3', [
         doctor1.id,
         patient.id,
         slotStart,
@@ -318,7 +316,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotStart = hospitalLocalToUtc(targetDate, '09:45:00').toISOString();
       const slotEnd = hospitalLocalToUtc(targetDate, '10:00:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE (doctor_id = $1 OR patient_id = $2) AND starts_at = $3;', [
+      await deleteAppointmentsWhere('(doctor_id = $1 OR patient_id = $2) AND starts_at = $3', [
         doctor1.id,
         patient.id,
         slotStart,
@@ -359,7 +357,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotStart = hospitalLocalToUtc(targetDate, '10:00:00').toISOString();
       const slotEnd = hospitalLocalToUtc(targetDate, '10:15:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE (doctor_id = $1 OR patient_id = $2) AND starts_at = $3;', [
+      await deleteAppointmentsWhere('(doctor_id = $1 OR patient_id = $2) AND starts_at = $3', [
         doctor1.id,
         patient.id,
         slotStart,
@@ -401,7 +399,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotStart = hospitalLocalToUtc(targetDate, '10:15:00').toISOString();
       const slotEnd = hospitalLocalToUtc(targetDate, '10:30:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE (doctor_id = $1 OR patient_id = $2) AND starts_at = $3;', [
+      await deleteAppointmentsWhere('(doctor_id = $1 OR patient_id = $2) AND starts_at = $3', [
         doctor1.id,
         patient.id,
         slotStart,
@@ -440,7 +438,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotStart = hospitalLocalToUtc(targetDate, '10:30:00').toISOString();
       const slotEnd = hospitalLocalToUtc(targetDate, '10:45:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE (doctor_id = $1 OR patient_id = $2) AND starts_at = $3;', [
+      await deleteAppointmentsWhere('(doctor_id = $1 OR patient_id = $2) AND starts_at = $3', [
         doctor1.id,
         patient.id,
         slotStart,
@@ -490,7 +488,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotStart = hospitalLocalToUtc(targetDate, '10:45:00').toISOString();
       const slotEnd = hospitalLocalToUtc(targetDate, '11:00:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE (doctor_id = $1 OR patient_id = $2) AND starts_at = $3;', [
+      await deleteAppointmentsWhere('(doctor_id = $1 OR patient_id = $2) AND starts_at = $3', [
         doctor1.id,
         patient.id,
         slotStart,
@@ -543,6 +541,53 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const checkApt = await query('SELECT * FROM appointments WHERE appointment_number = $1;', [aptNumber]);
       expect(checkApt.rows.length).toBe(0);
     });
+
+    it('SERVICE-LEVEL atomicity: POST /appointments leaves NO row when the real audit write fails, and the key can be retried', async () => {
+      const patient = await createCleanPatient('Service Atomicity Patient');
+      const targetDate = getNextWeekday(2);
+      const slotStart = hospitalLocalToUtc(targetDate, '11:15:00').toISOString();
+      const slotEnd = hospitalLocalToUtc(targetDate, '11:30:00').toISOString();
+      await deleteAppointmentsWhere('doctor_id = $1 AND starts_at = $2', [doctor1.id, slotStart]);
+
+      const key = `ATOMIC-${Date.now()}`;
+      const body = {
+        patientId: patient.id,
+        doctorId: doctor1.id,
+        startsAt: slotStart,
+        endsAt: slotEnd,
+        reasonForVisit: 'Atomicity proof',
+      };
+
+      // Make the REAL service's audit call fail after the appointment INSERT has run in its transaction
+      const spy = vi.spyOn(auditService, 'logAction').mockRejectedValueOnce(new Error('simulated audit outage'));
+      const failed = await request(app)
+        .post('/api/v1/appointments')
+        .set('Cookie', frontDeskAuth.cookie)
+        .set('Idempotency-Key', key)
+        .send(body);
+      expect(spy).toHaveBeenCalled();
+      spy.mockRestore();
+
+      expect(failed.status).toBe(500);
+      expect(JSON.stringify(failed.body)).not.toMatch(/simulated audit outage|stack|at .*\.js/i);
+
+      // The mutation must have been rolled back together with the failed audit
+      const rows = await query('SELECT id FROM appointments WHERE patient_id = $1;', [patient.id]);
+      expect(rows.rows.length).toBe(0);
+
+      // A 500 releases the idempotency key, so the client can safely retry and succeed
+      const retry = await request(app)
+        .post('/api/v1/appointments')
+        .set('Cookie', frontDeskAuth.cookie)
+        .set('Idempotency-Key', key)
+        .send(body);
+      expect(retry.status).toBe(201);
+      const audit = await query(
+        "SELECT 1 FROM audit_log WHERE action = 'CREATE_APPOINTMENT' AND entity_id = $1;",
+        [retry.body.data.id]
+      );
+      expect(audit.rows.length).toBe(1);
+    });
   });
 
   // =========================================================================
@@ -592,7 +637,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slot2Start = hospitalLocalToUtc(targetDate, '11:15:00').toISOString();
       const slot2End = hospitalLocalToUtc(targetDate, '11:30:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE starts_at IN ($1, $2);', [
+      await deleteAppointmentsWhere('starts_at IN ($1, $2)', [
         slot1Start,
         slot2Start,
       ]);
@@ -639,7 +684,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
         const slotStart = hospitalLocalToUtc(targetDate, '09:00:00').toISOString();
         const slotEnd = hospitalLocalToUtc(targetDate, '09:15:00').toISOString();
 
-        await query('DELETE FROM appointments WHERE starts_at = $1;', [slotStart]);
+        await deleteAppointmentsWhere('starts_at = $1', [slotStart]);
 
         const startTime = Date.now();
         const attempts = Array.from({ length: 20 }, (_, idx) => {
@@ -679,7 +724,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
         const slotStart = hospitalLocalToUtc(targetDate, '14:30:00').toISOString();
         const slotEnd = hospitalLocalToUtc(targetDate, '14:45:00').toISOString();
 
-        await query('DELETE FROM appointments WHERE starts_at = $1 OR patient_id = $2;', [slotStart, patient.id]);
+        await deleteAppointmentsWhere('starts_at = $1 OR patient_id = $2', [slotStart, patient.id]);
 
         const twentyDoctors = await get20TestDoctors();
 
@@ -722,7 +767,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
         const initialStart = hospitalLocalToUtc(targetDate, '09:30:00').toISOString();
         const initialEnd = hospitalLocalToUtc(targetDate, '09:45:00').toISOString();
 
-        await query('DELETE FROM appointments WHERE starts_at = $1;', [initialStart]);
+        await deleteAppointmentsWhere('starts_at = $1', [initialStart]);
 
         const bookRes = await request(app)
           .post('/api/v1/appointments')
@@ -747,7 +792,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
 
         for (const timeStr of targetSlots) {
           const sUtc = hospitalLocalToUtc(targetDate, timeStr).toISOString();
-          await query('DELETE FROM appointments WHERE starts_at = $1;', [sUtc]);
+          await deleteAppointmentsWhere('starts_at = $1', [sUtc]);
         }
 
         const startTime = Date.now();
@@ -790,7 +835,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotStart = hospitalLocalToUtc(targetDate, '09:00:00').toISOString();
       const slotEnd = hospitalLocalToUtc(targetDate, '09:15:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE starts_at = $1;', [slotStart]);
+      await deleteAppointmentsWhere('starts_at = $1', [slotStart]);
 
       const sharedKey = `CONCURRENT-KEY-${Date.now()}`;
       const attempts = Array.from({ length: 10 }, () => {
@@ -831,7 +876,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const targetSlotStart = hospitalLocalToUtc(targetDate, '10:00:00').toISOString();
       const targetSlotEnd = hospitalLocalToUtc(targetDate, '10:15:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE starts_at = $1;', [targetSlotStart]);
+      await deleteAppointmentsWhere('starts_at = $1', [targetSlotStart]);
 
       const aptIds = [];
       const initialSlots = [
@@ -847,7 +892,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
         const sUtc = hospitalLocalToUtc(targetDate, initialSlots[i][0]).toISOString();
         const eUtc = hospitalLocalToUtc(targetDate, initialSlots[i][1]).toISOString();
 
-        await query('DELETE FROM appointments WHERE starts_at = $1;', [sUtc]);
+        await deleteAppointmentsWhere('starts_at = $1', [sUtc]);
 
         const bRes = await request(app)
           .post('/api/v1/appointments')
@@ -900,7 +945,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slotBStart = hospitalLocalToUtc(targetDate, '15:15:00').toISOString();
       const slotBEnd = hospitalLocalToUtc(targetDate, '15:30:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE starts_at IN ($1, $2);', [
+      await deleteAppointmentsWhere('starts_at IN ($1, $2)', [
         slotAStart,
         slotBStart,
       ]);
@@ -1078,7 +1123,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slot1Start = hospitalLocalToUtc(targetDate, '14:00:00').toISOString();
       const slot1End = hospitalLocalToUtc(targetDate, '14:15:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE starts_at IN ($1, $2);', [
+      await deleteAppointmentsWhere('starts_at IN ($1, $2)', [
         slot1Start,
         hospitalLocalToUtc(targetDate, '14:15:00').toISOString(),
       ]);
@@ -1391,7 +1436,7 @@ describe('Phase 2 Round 2 Fixes & Verification Suite', () => {
       const slot2Start = hospitalLocalToUtc(targetDate, '16:15:00').toISOString();
       const slot2End = hospitalLocalToUtc(targetDate, '16:30:00').toISOString();
 
-      await query('DELETE FROM appointments WHERE starts_at IN ($1, $2);', [slot1Start, slot2Start]);
+      await deleteAppointmentsWhere('starts_at IN ($1, $2)', [slot1Start, slot2Start]);
 
       const resApt1 = await request(app)
         .post('/api/v1/appointments')

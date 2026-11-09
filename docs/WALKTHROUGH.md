@@ -70,3 +70,65 @@
    - **A**: The middleware hashes the request body with SHA-256. If a matching key exists with a different hash, it returns `422 IDEMPOTENCY_KEY_REUSED` to prevent payload hijacking.
 3. **Q: Does an uncaught 500 error permanently lock the idempotency key?**
    - **A**: No. If a server crash or 500 internal error occurs during execution, the middleware deletes the temporary processing record so the client can safely retry once the underlying issue is resolved.
+
+---
+
+## Phase 3 (backend): Billing, Clinical Records, Reports, Access Control
+
+### 5. Module Overview: Billing & Payments
+- **What it does**: Front desk creates invoices from line items and takes payments; admin can read. All money is integer paise. Totals are computed on the server and reconciled against payments.
+- **Key files**:
+  - `backend/src/services/billingService.js`: money math, the payment row lock, overpayment rejection, simulated gateway, reconciliation.
+  - `backend/src/repositories/invoiceRepository.js`: all invoice/payment SQL.
+  - `backend/db/migrations/006_billing_sequences_and_invoice_uniqueness.sql`: number sequences and one live invoice per appointment.
+
+#### Likely Reviewer Questions & Answers
+1. **Q: Two cashiers each take 40% of a bill at the same moment. How do you stop the total exceeding the invoice?**
+   - **A**: The payment transaction first locks the invoice row with `SELECT ... FOR UPDATE`, then sums successful payments and compares. Concurrent payments for one invoice therefore run one at a time. A test fires 10 simultaneous 40% payments: exactly 2 succeed, 8 get `422 OVERPAYMENT_REJECTED`, and the paid total is exactly 80%.
+2. **Q: Why integer paise and not decimals?**
+   - **A**: Floating point cannot represent most decimal amounts exactly. Request validation rejects fractions, the column is `BIGINT`, and the API returns JSON numbers (the `pg` driver returns `BIGINT` as strings, so the service converts and refuses unsafe values).
+3. **Q: A card is declined. What happens to the invoice and the card number?**
+   - **A**: The attempt is stored as a `declined` payment (visible and audited) but no money moves and the invoice status is unchanged. Only the last four digits are ever stored; a test asserts the full number appears in no table, audit entry or response.
+
+### 6. Module Overview: Encounters & Clinical Records
+- **What it does**: Starting a consultation opens an encounter; clinicians add notes, prescriptions and diagnostic-report metadata to their own open encounter. Completing the consultation closes it.
+- **Key files**:
+  - `backend/src/services/clinicalService.js`: ownership checks, audit rules.
+  - `backend/src/services/appointmentService.js`: encounter open/close inside the status-change transaction.
+  - `backend/src/repositories/clinicalRepository.js`.
+
+#### Likely Reviewer Questions & Answers
+1. **Q: Admins can read the audit log. Could they read clinical notes through it?**
+   - **A**: No. Clinical audit entries hold ids and counts only, never text. A test writes a unique marker into a note and asserts it appears in no audit row. Admin can list encounters as metadata only; the query never joins the clinical tables.
+2. **Q: Who may read a patient's full clinical record?**
+   - **A**: Only a clinician with an appointment or encounter with that patient (the same rule in the list filter and the single-read check). Admin, front desk and unrelated clinicians get 403, and the denial is audited. Each permitted read is itself audited.
+3. **Q: What stops a clinician editing a finished consultation?**
+   - **A**: Notes and prescriptions are only accepted while the encounter is `in_progress`; afterwards the API returns `409 ENCOUNTER_CLOSED`. Writing into another doctor's encounter is `403`.
+
+### 7. Module Overview: Directory, Access Revocation & Staff
+- **What it does**: Admin manages departments, doctors, schedules and staff accounts.
+- **Key files**:
+  - `backend/src/services/directoryService.js`, `backend/src/repositories/userRepository.js`.
+
+#### Likely Reviewer Questions & Answers
+1. **Q: An admin removes a doctor. Can that doctor still log in?**
+   - **A**: No. Removal disables the linked login in the same transaction, and the session lookup also refuses an inactive doctor profile, so an already-issued cookie stops working immediately. This was a real hole in an earlier version; the test that guards it was verified to fail when the fix is removed.
+2. **Q: What if creating a doctor fails halfway?**
+   - **A**: The login account, doctor profile and audit entry are written in one transaction, so there is never a clinician login without a doctor profile. A test forces the audit write to fail and asserts no account remains.
+3. **Q: Can an admin lock themselves out?**
+   - **A**: No. Deactivating your own account returns `409 CANNOT_DEACTIVATE_SELF`.
+
+### 8. Module Overview: Reports, Audit Viewer & Engineering Guards
+- **What it does**: Admin summary (appointments, revenue, outstanding, top doctors) and a paginated, filterable audit log. Automated guards keep the code structure honest.
+- **Key files**:
+  - `backend/src/services/reportService.js`, `backend/src/repositories/auditRepository.js`.
+  - `backend/tests/architecture.test.js`, `backend/tests/openapi-coverage.test.js`.
+
+#### Likely Reviewer Questions & Answers
+1. **Q: How do you know the report numbers are right?**
+   - **A**: The test recomputes revenue, declined payments, outstanding balance and appointment counts with independent SQL that does its own hospital-timezone date arithmetic, and requires exact equality.
+2. **Q: How do you keep the API docs from drifting?**
+   - **A**: A test walks Express's real router and fails if a route is undocumented, a documented route does not exist, or `docs/openapi.yaml` differs from the JSON source.
+3. **Q: How is the controller -> service -> repository layering enforced?**
+   - **A**: `architecture.test.js` fails the build if SQL or a database import appears in routes, controllers, services or middleware, if a secret fallback literal appears in source, or if `console.*` is used instead of the structured logger.
+

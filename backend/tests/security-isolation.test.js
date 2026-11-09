@@ -1,8 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
+import express from 'express';
 import pg from 'pg';
 import app from '../src/app.js';
 import { query } from '../src/config/db.js';
+import { createLimiter } from '../src/middleware/rateLimiter.js';
+import patientRepository from '../src/repositories/patientRepository.js';
+import { loginAs } from './helpers.js';
 
 describe('Security Hardening & Test DB Isolation Checks', () => {
   describe('A2: Test Database Isolation Proof', () => {
@@ -57,18 +61,30 @@ describe('Security Hardening & Test DB Isolation Checks', () => {
       expect(res.status).toBe(413);
     });
 
-    it('ensures error responses never leak stack traces or internal SQL in production/standard modes', async () => {
-      // Request an invalid UUID that could cause database cast failure
-      const res = await request(app)
-        .get('/api/v1/patients/not-a-valid-uuid')
-        .set('Authorization', 'Bearer invalid-token');
+    it('forced internal and database errors return a generic 500: no stack trace, SQL, file paths or error message', async () => {
+      const admin = await loginAs('admin@aarogya.local');
+      const leakyMessage = 'relation "patients" does not exist: SELECT password_hash FROM users WHERE id = 42';
+      const dbError = Object.assign(new Error(leakyMessage), {
+        code: '42P01',
+        stack: 'Error: boom\n    at Object.query (/srv/app/backend/src/config/db.js:12:5)',
+        detail: 'Key (id)=(secret) is not present',
+        query: 'SELECT password_hash FROM users',
+      });
+      const plainError = new Error('Internal secret: JWT_SECRET=abc123');
 
-      expect(res.status).toBe(401); // Unauthorized caught before invalid query
-      expect(res.body.error).toBeDefined();
-      expect(res.body.error.code).toBe('UNAUTHORIZED');
-      // Verify no stack trace is leaked in response
-      expect(res.body.stack).toBeUndefined();
-      expect(res.body.error.stack).toBeUndefined();
+      for (const failure of [dbError, plainError]) {
+        const spy = vi.spyOn(patientRepository, 'getPatients').mockRejectedValueOnce(failure);
+        const res = await request(app).get('/api/v1/patients').set('Cookie', admin.cookie);
+        spy.mockRestore();
+
+        expect(res.status).toBe(500);
+        expect(res.body.error.code).toBe('INTERNAL_ERROR');
+        expect(res.body.error.requestId).toBeTruthy();
+        const raw = JSON.stringify(res.body);
+        for (const forbidden of ['SELECT', 'password_hash', 'JWT_SECRET', 'abc123', 'stack', '.js:', '/srv/app', 'does not exist', 'secret']) {
+          expect(raw, `response leaked "${forbidden}"`).not.toContain(forbidden);
+        }
+      }
     });
 
     it('validates bcrypt hash cost is >= 10', async () => {
@@ -80,19 +96,54 @@ describe('Security Hardening & Test DB Isolation Checks', () => {
       expect(cost).toBeGreaterThanOrEqual(10);
     });
 
-    it('verifies rate limiter produces standard error format with HTTP 429 when triggered', () => {
-      // Simulate rate limiter standard payload structure
-      const sample429 = {
+    it('the limiter really returns 429 in the standard error format once the limit is exceeded', async () => {
+      // A tiny app using the SAME factory that builds loginLimiter/apiLimiter (limit 3 per window)
+      const mini = express();
+      mini.use((req, res, next) => {
+        req.id = 'req-from-test';
+        next();
+      });
+      mini.use(createLimiter({ windowMs: 60_000, max: 3, message: 'Too many login attempts. Slow down.' }));
+      mini.get('/ping', (req, res) => res.json({ ok: true }));
+
+      const statuses = [];
+      let blocked;
+      for (let i = 0; i < 5; i++) {
+        const res = await request(mini).get('/ping');
+        statuses.push(res.status);
+        if (res.status === 429) blocked = res;
+      }
+      expect(statuses).toEqual([200, 200, 200, 429, 429]);
+      expect(blocked.body).toEqual({
         error: {
           code: 'RATE_LIMIT_EXCEEDED',
-          message: 'Too many login attempts. Please try again after 15 minutes.',
+          message: 'Too many login attempts. Slow down.',
           details: {},
-          requestId: 'test-req-id',
+          requestId: 'req-from-test',
         },
-      };
+      });
+    });
 
-      expect(sample429.error.code).toBe('RATE_LIMIT_EXCEEDED');
-      expect(sample429.error.requestId).toBeDefined();
+    it('the real login route is actually behind the limiter (rate-limit headers present)', async () => {
+      const res = await request(app).post('/api/v1/auth/login').send({ email: 'nobody@aarogya.local', password: 'x' });
+      expect(res.status).toBe(401);
+      expect(res.headers['ratelimit-limit']).toBeDefined();
+      expect(Number(res.headers['ratelimit-remaining'])).toBeGreaterThanOrEqual(0);
+    });
+
+    it('newly created staff accounts are hashed with bcrypt cost >= 10 and the hash is never returned', async () => {
+      const admin = await loginAs('admin@aarogya.local');
+      const email = `bcrypt.check.${Date.now()}@aarogya.local`;
+      const res = await request(app)
+        .post('/api/v1/directory/staff')
+        .set('Cookie', admin.cookie)
+        .send({ email, password: 'Password123!', fullName: 'Bcrypt Check', phone: '+91 9888888888', role: 'front_desk' });
+      expect(res.status).toBe(201);
+      expect(JSON.stringify(res.body)).not.toMatch(/password|\$2[aby]\$/i);
+
+      const row = await query('SELECT password_hash FROM users WHERE email = $1', [email]);
+      expect(row.rows[0].password_hash).not.toContain('Password123!');
+      expect(parseInt(row.rows[0].password_hash.split('$')[2], 10)).toBeGreaterThanOrEqual(10);
     });
   });
 });

@@ -111,13 +111,29 @@ Routes  ──>  Controllers  ──>  Services (Business Logic)  ──>  Repos
 
 ---
 
-## Known Limitations & Architectural Assumptions
+## Implementation Status
 
-1. **Single Hospital Campus Timezone**: The system assumes a single primary hospital operating under `Asia/Kolkata` (IST, UTC+05:30). Supporting a multi-facility network across distinct timezones would require facility-level timezone metadata.
-2. **In-Memory Rate Limiting**: The Express rate limiters (`apiLimiter`, `loginLimiter`) operate in Node.js process memory. In a multi-replica clustered production deployment, a distributed Redis-backed store (`rate-limit-redis`) is required to synchronize rate-limit windows across nodes.
-3. **Database Connection Pooling Scale**: PostgreSQL pool is sized to 20 connections for local development and test concurrency. For enterprise deployments handling thousands of concurrent staff, an external pooler such as PgBouncer or Supavisor is recommended in transaction pooling mode.
-4. **Binary Asset Storage**: Diagnostic report records store clinical metadata (patient, doctor, test type, results summary, status, timestamps). Large binary payloads (DICOM image stacks, high-res pathology slides, multi-page PDFs) are intentionally kept out of relational tables; an object store (S3/GCS/MinIO) with pre-signed upload/download URLs should be integrated for blob streaming.
-5. **Simulated Payment Gateway**: The billing system models integer paise ledger reconciliation and rejects overpayment. Payment gateway processing is simulated for sandbox testing; real external webhooks (e.g. Razorpay/Stripe) require webhook signature verification endpoints.
-6. **Appointment Cancellation Workflow**: Clinicians are strictly restricted from cancelling appointments directly (`403 FORBIDDEN`) to maintain front-desk scheduling integrity and avoid orphaned clinical slots; clinician schedule changes or cancellations must be coordinated through administrative front-desk staff.
-7. **Idempotency In-Progress Locking**: When duplicate HTTP requests with the exact same Idempotency-Key arrive while the initial transaction is still executing, the secondary request receives 409 `IDEMPOTENCY_IN_PROGRESS` rather than waiting on database lock queues. Once committed, subsequent requests receive the cached result.
-8. **No Algorithmic Clinical Decision Support**: Per non-negotiable requirements, the system strictly disallows automated diagnosis or drug-drug interaction warnings; prescription accuracy relies entirely on treating clinician judgment.
+| Area | Status |
+|---|---|
+| Backend API: auth, RBAC, audit, patients, directory, slots, appointments, encounters, clinical records, billing, reports | Implemented, documented (`/api/docs`) and tested against a real PostgreSQL database |
+| Web UI (React) | **Not built yet.** The API is complete and explorable through Swagger UI |
+| Real payment gateway, file storage, email/SMS | Not implemented (see below) |
+
+## Known Limitations & Assumptions
+
+These are real gaps and deliberate simplifications, not hypothetical future work.
+
+1. **No web UI yet.** Everything is exercised through the API, Swagger UI and the automated tests.
+2. **Payments are a sandbox simulation.** Only three fixed test cards behave differently (`4242424242424242` succeeds; `4000000000000002` and `4000000000009995` are declined). There is no real gateway, no webhooks and **no refunds**. Only the last four card digits are ever stored.
+3. **Tax and discounts are plain amounts** supplied by the front desk (in paise). There is no GST rule engine, no tax-rate table and no discount-approval workflow.
+4. **Diagnostic reports store metadata only** (test name, category, date, file name). No file upload or object storage exists.
+5. **No structured vitals.** Examination findings are free text inside clinical notes.
+6. **Deactivating a doctor does not touch their future appointments.** Access is revoked immediately (login and existing sessions stop working), but upcoming appointments stay `scheduled` and need to be cancelled or rebooked by the front desk.
+7. **Idempotency replays failures too.** Any response below HTTP 500 is stored under the key, including 4xx errors such as `422` or `409 SLOT_TAKEN`. A corrected retry must use a **new** key. A duplicate that arrives while the first request is still running gets `409 IDEMPOTENCY_IN_PROGRESS` instead of waiting. Expired keys are not purged on a schedule.
+8. **The audit log stores patient demographic before/after snapshots** on updates (this is what makes edits reviewable), and admins can read the log. It deliberately never stores clinical note, prescription or card content, only ids and counts.
+9. **No password reset, MFA or account lockout.** Brute force is limited only by the login rate limiter.
+10. **Rate limiting is in process memory.** A multi-instance deployment would need a shared store such as Redis.
+11. **Single hospital timezone.** All schedule logic assumes `Asia/Kolkata`. Multiple facilities would need per-facility timezone metadata.
+12. **Search uses `ILIKE`** without trigram or full-text indexes. Fine at demo scale, not at millions of rows.
+13. **Connection pool is 20 per process.** Larger deployments would put PgBouncer in front.
+14. **Synthetic data only.** The system is a demo and must never hold real patient data. It never suggests diagnoses and gives no drug-interaction or dosing advice; clinical decisions are entirely the clinician's.

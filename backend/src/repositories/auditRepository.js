@@ -42,28 +42,42 @@ export async function createAuditEntry(
   return result.rows[0];
 }
 
-export async function getAuditLogs({ limit = 50, offset = 0, entityType = null, entityId = null }) {
-  let sql = 'SELECT * FROM audit_log WHERE 1=1';
+export async function getAuditLogs({
+  page = 1,
+  pageSize = 50,
+  entityType = null,
+  entityId = null,
+  actorId = null,
+  action = null,
+  from = null,
+  to = null,
+}) {
   const values = [];
+  let where = ' WHERE 1=1';
+  const add = (clause, value) => {
+    values.push(value);
+    where += ` AND ${clause.replace('?', `$${values.length}`)}`;
+  };
 
-  if (entityType) {
-    values.push(entityType);
-    sql += ` AND entity_type = $${values.length}`;
-  }
+  if (entityType) add('a.entity_type = ?', entityType);
+  if (entityId) add('a.entity_id = ?', entityId);
+  if (actorId) add('a.actor_id = ?', actorId);
+  if (action) add('a.action = ?', action);
+  if (from) add('a.ts >= ?', from);
+  if (to) add('a.ts < ?', to);
 
-  if (entityId) {
-    values.push(entityId);
-    sql += ` AND entity_id = $${values.length}`;
-  }
+  const base = ` FROM audit_log a LEFT JOIN users u ON u.id = a.actor_id${where}`;
+  const countRes = await query(`SELECT COUNT(*) AS total${base}`, values);
+  const total = parseInt(countRes.rows[0].total, 10);
 
-  values.push(limit);
-  sql += ` ORDER BY ts DESC LIMIT $${values.length}`;
-
-  values.push(offset);
-  sql += ` OFFSET $${values.length}`;
-
-  const result = await query(sql, values);
-  return result.rows;
+  values.push(pageSize, (page - 1) * pageSize);
+  const result = await query(
+    `SELECT a.*, u.full_name AS actor_name, u.email AS actor_email${base}
+     ORDER BY a.ts DESC, a.id
+     LIMIT $${values.length - 1} OFFSET $${values.length}`,
+    values
+  );
+  return { data: result.rows, page, pageSize, total };
 }
 
 export default {

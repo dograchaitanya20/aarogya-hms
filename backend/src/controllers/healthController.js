@@ -1,9 +1,9 @@
-import { query } from '../config/db.js';
+import healthRepository from '../repositories/healthRepository.js';
 
 export async function getHealth(req, res, next) {
   try {
     const dbStart = Date.now();
-    await query('SELECT 1');
+    await healthRepository.ping();
     const dbLatencyMs = Date.now() - dbStart;
 
     res.status(200).json({

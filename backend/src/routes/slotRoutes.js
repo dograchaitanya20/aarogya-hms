@@ -11,4 +11,9 @@ router.use(requireAuth);
 router.get('/', requireRole('admin', 'clinician', 'front_desk'), slotController.searchSlots);
 router.get('/doctors/:id/slots', requireRole('admin', 'clinician', 'front_desk'), slotController.getDoctorSlots);
 
+// Spec path: GET /api/v1/doctors/:id/slots (the /slots/doctors/:id/slots form above is kept as an alias)
+export const doctorSlotRouter = Router();
+doctorSlotRouter.use(requireAuth);
+doctorSlotRouter.get('/:id/slots', requireRole('admin', 'clinician', 'front_desk'), slotController.getDoctorSlots);
+
 export default router;

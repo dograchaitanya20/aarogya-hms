@@ -6,6 +6,7 @@ export async function findByEmail(email) {
     FROM users u
     LEFT JOIN doctors d ON d.user_id = u.id
     WHERE LOWER(u.email) = LOWER($1) AND u.is_active = true
+      AND (d.id IS NULL OR d.is_active = true)
     LIMIT 1;
   `;
   const result = await query(sql, [email.trim()]);
@@ -21,6 +22,7 @@ export async function findById(id) {
     LEFT JOIN doctors d ON d.user_id = u.id
     LEFT JOIN departments dept ON dept.id = d.department_id
     WHERE u.id = $1 AND u.is_active = true
+      AND (d.id IS NULL OR d.is_active = true)
     LIMIT 1;
   `;
   const result = await query(sql, [id]);
@@ -41,8 +43,72 @@ export async function checkClinicianPatientAccess(clinicianUserId, patientId) {
   return result.rows.length > 0;
 }
 
+export async function emailExists(email, client = null) {
+  const runner = client || { query };
+  const result = await runner.query('SELECT 1 FROM users WHERE LOWER(email) = LOWER($1)', [email.trim()]);
+  return result.rows.length > 0;
+}
+
+export async function createUser({ email, passwordHash, role, fullName, phone }, client = null) {
+  const runner = client || { query };
+  const result = await runner.query(
+    `INSERT INTO users (email, password_hash, role, full_name, phone)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, email, role, full_name, phone, is_active, created_at`,
+    [email.trim(), passwordHash, role, fullName, phone]
+  );
+  return result.rows[0];
+}
+
+// password_hash is never selected here
+export async function findStaffForUpdate(id, client) {
+  const result = await client.query(
+    'SELECT id, email, role, is_active FROM users WHERE id = $1 FOR UPDATE',
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+export async function setActive(id, isActive, client = null) {
+  const runner = client || { query };
+  const result = await runner.query(
+    `UPDATE users SET is_active = $2, updated_at = clock_timestamp()
+     WHERE id = $1
+     RETURNING id, email, role, full_name, phone, is_active, updated_at`,
+    [id, Boolean(isActive)]
+  );
+  return result.rows[0] || null;
+}
+
+export async function listStaff({ role = null, page = 1, pageSize = 20, q = '' }) {
+  const values = [];
+  let where = ' WHERE 1=1';
+  if (role) {
+    values.push(role);
+    where += ` AND role = $${values.length}`;
+  }
+  if (q && q.trim()) {
+    values.push(`%${q.trim()}%`);
+    where += ` AND (full_name ILIKE $${values.length} OR email ILIKE $${values.length})`;
+  }
+  const countRes = await query(`SELECT COUNT(*) AS total FROM users${where}`, values);
+  const total = parseInt(countRes.rows[0].total, 10);
+  values.push(pageSize, (page - 1) * pageSize);
+  const result = await query(
+    `SELECT id, email, role, full_name, phone, is_active, created_at FROM users${where}
+     ORDER BY created_at DESC, id LIMIT $${values.length - 1} OFFSET $${values.length}`,
+    values
+  );
+  return { data: result.rows, page, pageSize, total };
+}
+
 export default {
   findByEmail,
   findById,
   checkClinicianPatientAccess,
+  emailExists,
+  createUser,
+  findStaffForUpdate,
+  setActive,
+  listStaff,
 };

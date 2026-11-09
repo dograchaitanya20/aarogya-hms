@@ -55,13 +55,14 @@ export async function createDoctor({
   specialization,
   consultationFeePaise,
   roomNumber,
-}) {
+}, client = null) {
+  const runner = client || { query };
   const sql = `
     INSERT INTO doctors (user_id, department_id, specialization, consultation_fee_paise, room_number)
     VALUES ($1, $2, $3, $4, $5)
     RETURNING *;
   `;
-  const result = await query(sql, [
+  const result = await runner.query(sql, [
     userId,
     departmentId,
     specialization,
@@ -71,7 +72,8 @@ export async function createDoctor({
   return result.rows[0];
 }
 
-export async function updateDoctor(id, updates) {
+export async function updateDoctor(id, updates, client = null) {
+  const runner = client || { query };
   const fields = [];
   const values = [];
 
@@ -105,12 +107,13 @@ export async function updateDoctor(id, updates) {
     WHERE id = $${values.length}
     RETURNING *;
   `;
-  const result = await query(sql, values);
+  const result = await runner.query(sql, values);
   return result.rows[0];
 }
 
-export async function deleteDoctor(id) {
-  const result = await query(
+export async function deleteDoctor(id, client = null) {
+  const runner = client || { query };
+  const result = await runner.query(
     'UPDATE doctors SET is_active = false, updated_at = clock_timestamp() WHERE id = $1 RETURNING *;',
     [id]
   );

@@ -4,8 +4,7 @@ import userRepository from '../repositories/userRepository.js';
 import auditService from './auditService.js';
 import { UnauthorizedError } from '../errors/AppError.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-jwt-super-secret-key-change-in-production-min-32-chars';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
+import { JWT_SECRET, JWT_EXPIRES_IN } from '../config/env.js';
 
 export async function login({ email, password, ipAddress, userAgent, requestId }) {
   const user = await userRepository.findByEmail(email);

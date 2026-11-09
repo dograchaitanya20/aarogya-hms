@@ -1,7 +1,7 @@
 import patientRepository from '../repositories/patientRepository.js';
 import auditService from './auditService.js';
 import { NotFoundError, ValidationError } from '../errors/AppError.js';
-import { query } from '../config/db.js';
+import { withTransaction } from '../utils/transaction.js';
 
 export async function listPatients({ page = 1, pageSize = 20, q = '', user, reqMeta }) {
   const clinicianDoctorId = user.role === 'clinician' ? user.doctor_id : null;
@@ -45,95 +45,56 @@ export async function getPatient(patientId, { user, reqMeta }) {
 }
 
 export async function createPatient(data, { user, reqMeta }) {
-  const patient = await patientRepository.createPatient(data);
-
-  // Audit creation of patient
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: 'CREATE_PATIENT',
-    entityType: 'patient',
-    entityId: patient.id,
-    afterState: patient,
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
+  // The patient row and its audit entry commit together or not at all
+  return withTransaction(async (client) => {
+    const patient = await patientRepository.createPatient(data, client);
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'CREATE_PATIENT',
+        entityType: 'patient',
+        entityId: patient.id,
+        afterState: patient,
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+    return patient;
   });
-
-  return patient;
 }
 
 export async function updatePatient(id, data, { user, reqMeta }) {
-  const current = await patientRepository.getPatientById(id);
-  if (!current) {
-    throw new NotFoundError(`Patient with ID '${id}' not found`);
-  }
-
-  const fields = [];
-  const values = [];
-
-  if (data.fullName !== undefined) {
-    values.push(data.fullName);
-    fields.push(`full_name = $${values.length}`);
-  }
-  if (data.phone !== undefined) {
-    values.push(data.phone);
-    fields.push(`phone = $${values.length}`);
-  }
-  if (data.email !== undefined) {
-    values.push(data.email || null);
-    fields.push(`email = $${values.length}`);
-  }
-  if (data.address !== undefined) {
-    values.push(data.address || null);
-    fields.push(`address = $${values.length}`);
-  }
-  if (data.emergencyContactName !== undefined) {
-    values.push(data.emergencyContactName || null);
-    fields.push(`emergency_contact_name = $${values.length}`);
-  }
-  if (data.emergencyContactPhone !== undefined) {
-    values.push(data.emergencyContactPhone || null);
-    fields.push(`emergency_contact_phone = $${values.length}`);
-  }
-  if (data.bloodGroup !== undefined) {
-    values.push(data.bloodGroup || null);
-    fields.push(`blood_group = $${values.length}`);
-  }
-  if (data.allergies !== undefined) {
-    values.push(data.allergies || null);
-    fields.push(`allergies = $${values.length}`);
-  }
-
-  if (fields.length === 0) {
+  if (!patientRepository.hasUpdatableFields(data)) {
     throw new ValidationError('At least one field must be provided to update patient demographics.');
   }
 
-  values.push(id);
-  const sql = `
-    UPDATE patients
-    SET ${fields.join(', ')}, updated_at = clock_timestamp()
-    WHERE id = $${values.length}
-    RETURNING *;
-  `;
-  const result = await query(sql, values);
-  const updated = result.rows[0];
-
-  // Audit patient update with before and after state
-  await auditService.logAction({
-    actorId: user.id,
-    actorRole: user.role,
-    action: 'UPDATE_PATIENT',
-    entityType: 'patient',
-    entityId: id,
-    beforeState: current,
-    afterState: updated,
-    ipAddress: reqMeta.ip,
-    userAgent: reqMeta.userAgent,
-    requestId: reqMeta.requestId,
+  // Lock the row, update it and write the before/after audit entry in ONE transaction
+  return withTransaction(async (client) => {
+    const current = await patientRepository.getPatientForUpdate(id, client);
+    if (!current) {
+      throw new NotFoundError(`Patient with ID '${id}' not found`);
+    }
+    const updated = await patientRepository.updatePatient(id, data, client);
+    await auditService.logAction(
+      {
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'UPDATE_PATIENT',
+        entityType: 'patient',
+        entityId: id,
+        beforeState: current,
+        afterState: updated,
+        ipAddress: reqMeta.ip,
+        userAgent: reqMeta.userAgent,
+        requestId: reqMeta.requestId,
+      },
+      client
+    );
+    return updated;
   });
-
-  return updated;
 }
 
 export default {
