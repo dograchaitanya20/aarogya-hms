@@ -50,7 +50,7 @@ export default function Dashboard() {
       <Card className="mb-6 flex flex-wrap items-end gap-3 p-3">
         <TextField label="From" type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} />
         <TextField label="To" type="date" value={to} min={from} max={istDate()} onChange={(e) => e.target.value && setTo(e.target.value)} />
-        <div className="flex gap-1.5 pb-0.5">{[7, 30, 90].map((n) => <Button key={n} size="sm" variant="secondary" onClick={() => preset(n)}>Last {n} days</Button>)}</div>
+        <div className="flex flex-wrap gap-1.5 pb-0.5">{[7, 30, 90].map((n) => <Button key={n} size="sm" variant="secondary" onClick={() => preset(n)}>Last {n} days</Button>)}</div>
       </Card>
 
       {report.isLoading && <Spinner label="Calculating" />}

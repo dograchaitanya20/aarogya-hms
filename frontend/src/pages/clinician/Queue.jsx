@@ -65,14 +65,21 @@ export default function Queue() {
         ) : (
           <ol className="divide-y">
             {rows.map((a) => (
-              <li key={a.id} className="grid grid-cols-[5.5rem_1fr_auto] items-center gap-4 px-4 py-4">
-                <span className="num text-lg font-semibold">{fmtTime(a.starts_at)}</span>
+              <li key={a.id} className="flex flex-col gap-3 px-4 py-4 sm:grid sm:grid-cols-[5.5rem_1fr_auto] sm:items-center sm:gap-4">
+                <div className="flex items-center justify-between sm:block">
+                  <span className="num text-lg font-semibold">{fmtTime(a.starts_at)}</span>
+                  <div className="sm:hidden">
+                    <StatusPill status={a.status} />
+                  </div>
+                </div>
                 <div className="min-w-0">
                   <p className="truncate font-semibold">{a.patient_name} <span className="num text-xs font-normal text-ink/55">{a.mrn}</span></p>
                   <p className="truncate text-sm text-ink/65">{a.reason_for_visit || 'No reason recorded'}</p>
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <StatusPill status={a.status} />
+                <div className="flex flex-wrap items-center justify-end gap-2 border-t border-ink/10 pt-2 sm:border-0 sm:pt-0">
+                  <div className="hidden sm:block">
+                    <StatusPill status={a.status} />
+                  </div>
                   {a.status === 'checked_in' && <Button size="sm" loading={busyId === a.id} onClick={() => change.mutate({ appt: a, next: 'in_consultation' })}><PlayCircle className="h-4 w-4" aria-hidden="true" />Start consultation</Button>}
                   {a.status === 'in_consultation' && (
                     <>
