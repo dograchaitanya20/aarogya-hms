@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth.jsx';
 import { fmtDate, fmtDateTime, fmtTime, rupees, rupeesToPaise, toNumber } from '../lib/format.js';
 import { useToast } from '../components/Toasts.jsx';
 import PatientPicker from '../components/PatientPicker.jsx';
+import { EmptyBillingArt } from '../components/Art.jsx';
 import { AreaField, Button, Card, Empty, ErrorNote, Modal, PageHeader, Pager, SearchBox, SelectField, Spinner, StatusPill, TableSkeleton, TextField, useDebounced } from '../components/ui.jsx';
 
 const BLANK_ITEM = () => ({ id: Math.random().toString(36).slice(2), description: '', qty: '1', price: '' });
@@ -345,7 +346,7 @@ export default function Billing() {
           <div className="flex items-end"><SearchBox value={q} onChange={setQ} placeholder="Invoice number, patient or MRN" className="w-full" /></div>
         </div>
         {list.error ? <div className="p-4"><ErrorNote error={list.error} onRetry={list.refetch} /></div> : list.isLoading ? <TableSkeleton cols={5} /> : rows.length === 0 ? (
-          <Empty icon={ReceiptText} title="No invoices match" action={canWrite && <Button variant="secondary" onClick={() => setCreating(true)}>Create an invoice</Button>}>Change the filters, or create an invoice for a completed visit.</Empty>
+          <Empty illustration={<EmptyBillingArt />} icon={ReceiptText} title="No invoices match" action={canWrite && <Button variant="secondary" onClick={() => setCreating(true)}>Create an invoice</Button>}>Change the filters, or create an invoice for a completed visit.</Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">

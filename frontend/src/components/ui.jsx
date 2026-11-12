@@ -253,12 +253,18 @@ export function PageHeader({ title, subtitle, actions }) {
   );
 }
 
-export function Empty({ title, children, action, icon: Icon = Inbox }) {
+export function Empty({ title, children, action, icon: Icon = Inbox, illustration }) {
   return (
     <div className="flex flex-col items-center gap-3 px-4 py-14 text-center">
-      <span className="grid h-12 w-12 place-items-center rounded-full bg-mint text-mint-ink">
-        <Icon className="h-6 w-6" aria-hidden="true" />
-      </span>
+      {illustration ? (
+        <div className="mb-1 flex justify-center" aria-hidden="true">
+          {illustration}
+        </div>
+      ) : (
+        <span className="grid h-12 w-12 place-items-center rounded-full bg-mint text-mint-ink">
+          <Icon className="h-6 w-6" aria-hidden="true" />
+        </span>
+      )}
       <p className="font-display text-lg font-semibold">{title}</p>
       {children && <p className="max-w-sm text-sm text-ink/65">{children}</p>}
       {action}

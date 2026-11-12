@@ -372,4 +372,18 @@ describe('Administrator', () => {
     expect(document.body.textContent).not.toMatch(/\$2[aby]\$/);
     expect(document.body.textContent).not.toContain('Password123!');
   });
+
+  it('displays custom SVG illustration when an empty search matches no patients', async () => {
+    const user = userEvent.setup();
+    await browserSignIn(FRONT_DESK);
+    renderApp('/patients');
+
+    await screen.findByRole('table');
+    const search = screen.getByPlaceholderText('Search patients');
+    await user.type(search, 'nonexistent-patient-query-xyz');
+
+    expect(await screen.findByText(/No patient matches/)).toBeInTheDocument();
+    const emptyContainer = screen.getByText(/No patient matches/).closest('div');
+    expect(emptyContainer.querySelector('svg')).toBeInTheDocument();
+  });
 });

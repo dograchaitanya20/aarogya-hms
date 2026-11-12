@@ -6,6 +6,7 @@ import { api, fieldErrors } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { ageFromDob, dobText } from '../lib/format.js';
 import { useToast } from '../components/Toasts.jsx';
+import { EmptyPatientsArt } from '../components/Art.jsx';
 import { AreaField, Button, Card, Empty, ErrorNote, Initials, Modal, PageHeader, Pager, SearchBox, SelectField, TableSkeleton, TextField, useDebounced } from '../components/ui.jsx';
 
 const BLOOD = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
@@ -139,7 +140,7 @@ export default function Patients() {
         ) : list.isLoading ? (
           <TableSkeleton cols={5} />
         ) : rows.length === 0 ? (
-          <Empty icon={Users} title={dq ? `No patient matches “${dq}”` : 'No patients yet'} action={canEdit && !dq && <Button onClick={() => setForm({ open: true, patient: null })}><Plus className="h-4 w-4" aria-hidden="true" />Register the first patient</Button>}>
+          <Empty illustration={<EmptyPatientsArt />} icon={Users} title={dq ? `No patient matches “${dq}”` : 'No patients yet'} action={canEdit && !dq && <Button onClick={() => setForm({ open: true, patient: null })}><Plus className="h-4 w-4" aria-hidden="true" />Register the first patient</Button>}>
             {dq ? 'Check the spelling or try the MRN or phone number.' : isClinician ? 'Patients appear here once they are booked with you.' : undefined}
           </Empty>
         ) : (

@@ -6,6 +6,7 @@ import { api } from '../../lib/api.js';
 import { addDays, fmtDate, fmtTime, istDate, istDayRange } from '../../lib/format.js';
 import { useToast } from '../../components/Toasts.jsx';
 import SlotBoard from '../../components/SlotBoard.jsx';
+import { EmptyAppointmentsArt } from '../../components/Art.jsx';
 import { AreaField, Button, ButtonLink, Card, Empty, ErrorNote, Modal, PageHeader, Pager, SearchBox, SelectField, StatusPill, TableSkeleton, TextField, cn, useDebounced } from '../../components/ui.jsx';
 
 function CancelModal({ appt, onClose, onDone }) {
@@ -165,7 +166,7 @@ export default function Appointments() {
         </div>
 
         {list.error ? <div className="p-4"><ErrorNote error={list.error} onRetry={list.refetch} /></div> : list.isLoading ? <TableSkeleton cols={5} /> : rows.length === 0 ? (
-          <Empty icon={CalendarClock} title="No appointments match" action={<ButtonLink to="/book" variant="secondary">Book a visit</ButtonLink>}>Try another day, or clear the filters.</Empty>
+          <Empty illustration={<EmptyAppointmentsArt />} icon={CalendarClock} title="No appointments match" action={<ButtonLink to="/book" variant="secondary">Book a visit</ButtonLink>}>Try another day, or clear the filters.</Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
