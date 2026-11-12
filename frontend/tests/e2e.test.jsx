@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { apiAs, boardLabel, browser, browserSignIn, installBrowserFetch, nextWorkingDay, renderApp } from './harness.jsx';
@@ -203,6 +203,14 @@ describe('Billing', () => {
     const drawerTitle = await screen.findByRole('heading', { name: /^INV-\d{4}-\d+$/ });
     const invoiceNumber = drawerTitle.textContent;
     expect(await within(screen.getByRole('dialog', { name: invoiceNumber })).findByText('Unpaid')).toBeInTheDocument();
+
+    // Print receipt button is available in the drawer and triggers window.print
+    const printBtn = within(screen.getByRole('dialog', { name: invoiceNumber })).getByRole('button', { name: /Print receipt/ });
+    expect(printBtn).toBeInTheDocument();
+    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => {});
+    await user.click(printBtn);
+    expect(printSpy).toHaveBeenCalled();
+    printSpy.mockRestore();
 
     await user.click(screen.getByRole('button', { name: 'Take payment' }));
     const pay = await screen.findByRole('dialog', { name: 'Take payment' });

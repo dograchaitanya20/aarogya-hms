@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BadgeCheck, CreditCard, FilePlus2, Plus, ReceiptText, Trash2, TriangleAlert } from 'lucide-react';
+import { BadgeCheck, CreditCard, FilePlus2, Plus, Printer, ReceiptText, Trash2, TriangleAlert } from 'lucide-react';
 import { api, explain, newIdempotencyKey } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import { fmtDate, fmtDateTime, fmtTime, rupees, rupeesToPaise, toNumber } from '../lib/format.js';
@@ -284,12 +284,13 @@ function InvoiceDrawer({ id, onClose, canWrite }) {
               )}
             </section>
 
-            {canWrite && live && (
-              <div className="flex flex-wrap gap-2 border-t pt-4">
-                {balance > 0 && <Button onClick={() => setPaying(true)}><CreditCard className="h-4 w-4" aria-hidden="true" />Take payment</Button>}
-                {d.reconciliation.paidPaise === 0 && <Button variant="ghost" onClick={() => setCancelling(true)}>Cancel invoice</Button>}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 print:hidden">
+              <div className="flex flex-wrap gap-2">
+                {canWrite && live && balance > 0 && <Button onClick={() => setPaying(true)}><CreditCard className="h-4 w-4" aria-hidden="true" />Take payment</Button>}
+                {canWrite && live && d.reconciliation.paidPaise === 0 && <Button variant="ghost" onClick={() => setCancelling(true)}>Cancel invoice</Button>}
               </div>
-            )}
+              <Button variant="secondary" onClick={() => window.print()}><Printer className="h-4 w-4" aria-hidden="true" />Print receipt</Button>
+            </div>
           </div>
         )}
       </Modal>
