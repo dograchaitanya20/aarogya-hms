@@ -98,11 +98,11 @@ export default function SlotBoard({ doctorId, date, selected, onSelect, conflict
         </ul>
       </div>
 
-      <ol className="divide-y rounded-lg border bg-surface">
+      <ol className="divide-y rounded-lg border bg-surface" role="region" aria-label="Available time slots">
         {hours.map(([hour, cells]) => (
-          <li key={hour} className="grid grid-cols-[4.5rem_1fr] items-stretch">
-            <span className="num border-r px-3 py-3 text-xs text-ink/55">{to12h(`${hour}:00`)}</span>
-            <div className="flex flex-wrap gap-2 p-2">
+          <li key={hour} className="grid grid-cols-[3.75rem_1fr] sm:grid-cols-[4.5rem_1fr] items-stretch">
+            <span className="num flex items-center border-r px-2 py-2.5 sm:px-3 sm:py-3 text-xs text-ink/55">{to12h(`${hour}:00`)}</span>
+            <div className="flex flex-wrap gap-2 p-1.5 sm:p-2">
               {cells.map((c) => {
                 const isSelected = selected === c.startsAt;
                 const isConflict = conflictAt === c.startsAt;
@@ -112,6 +112,7 @@ export default function SlotBoard({ doctorId, date, selected, onSelect, conflict
                     key={c.startsAt}
                     type="button"
                     layout
+                    tabIndex={c.state === 'open' && !isConflict ? 0 : -1}
                     animate={isConflict ? { x: [0, -5, 5, -3, 3, 0] } : { x: 0 }}
                     transition={{ duration: 0.35 }}
                     disabled={c.state !== 'open' || isConflict} /* a time we just learned is taken cannot be picked again, even before the board refreshes */
@@ -119,17 +120,23 @@ export default function SlotBoard({ doctorId, date, selected, onSelect, conflict
                     aria-label={label}
                     title={c.holder ? `Booked: ${c.holder.patient_name}` : undefined}
                     onClick={() => onSelect?.(c)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onSelect?.(c);
+                      }
+                    }}
                     className={cn(
-                      'num relative min-w-[4.6rem] rounded-md border px-2.5 py-2 text-sm transition-colors',
-                      isSelected && 'border-coral bg-coral font-semibold text-[#0F1F1C]',
-                      !isSelected && c.state === 'open' && 'border-primary/60 bg-mint text-mint-ink hover:border-primary hover:bg-primary hover:text-on-primary',
-                      c.state === 'booked' && 'hatch cursor-not-allowed text-ink/55',
-                      c.state === 'closed' && 'cursor-not-allowed text-ink/30 line-through',
+                      'num relative min-h-[2.5rem] sm:min-h-[2.25rem] min-w-[4.25rem] sm:min-w-[4.6rem] touch-manipulation select-none rounded-md border px-2 py-2 sm:px-2.5 text-xs sm:text-sm font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+                      isSelected && 'border-coral bg-coral font-semibold text-[#0F1F1C] shadow-sm',
+                      !isSelected && c.state === 'open' && 'border-primary/60 bg-mint text-mint-ink hover:border-primary hover:bg-primary hover:text-on-primary active:scale-95',
+                      c.state === 'booked' && 'hatch cursor-not-allowed text-ink/55 opacity-70',
+                      c.state === 'closed' && 'cursor-not-allowed text-ink/30 line-through opacity-50',
                       isConflict && 'border-coral ring-2 ring-coral'
                     )}
                   >
                     {to12h(c.local).replace(' ', '')}
-                    {isSelected && <Check className="absolute -right-1.5 -top-1.5 h-4 w-4 rounded-full bg-ink p-0.5 text-paper" aria-hidden="true" />}
+                    {isSelected && <Check className="absolute -right-1.5 -top-1.5 h-4 w-4 rounded-full bg-ink p-0.5 text-paper shadow-sm" aria-hidden="true" />}
                   </motion.button>
                 );
               })}

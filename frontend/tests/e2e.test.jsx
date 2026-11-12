@@ -154,6 +154,30 @@ describe('Booking board', () => {
 
     await cancelAllFor(rival.id);
   });
+
+  it('navigates and selects a slot with keyboard (Enter or Space)', async () => {
+    const user = userEvent.setup();
+    const { call } = await frontDeskApi();
+    const doctor = await doctorByEmail(CLINICIAN);
+    const { date, slots } = await nextWorkingDay(call, doctor.id);
+    const target = slots[0];
+
+    await browserSignIn(FRONT_DESK);
+    renderApp('/book');
+
+    const doctorSelect = await screen.findByLabelText('Doctor');
+    await waitFor(() => expect(within(doctorSelect).getAllByRole('option').length).toBeGreaterThan(1));
+    await user.selectOptions(doctorSelect, doctor.id);
+    fireEvent.change(screen.getByLabelText('Day'), { target: { value: date } });
+
+    const slotBtn = await screen.findByRole('button', { name: `${boardLabel(target.startsAt)}, open` });
+    slotBtn.focus();
+    expect(slotBtn).toHaveFocus();
+    fireEvent.keyDown(slotBtn, { key: 'Enter', code: 'Enter' });
+
+    expect(slotBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText(/Booking/)).toBeInTheDocument();
+  });
 });
 
 describe('Billing', () => {
