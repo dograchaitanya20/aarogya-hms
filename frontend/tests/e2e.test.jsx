@@ -49,6 +49,12 @@ describe('Sign in and access control', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     expect(await screen.findByRole('heading', { name: 'Appointments' })).toBeInTheDocument();
+    // Today at a glance strip is rendered with status counts
+    const glance = await screen.findByRole('region', { name: 'Today at a glance' });
+    expect(glance).toBeInTheDocument();
+    expect(within(glance).getByText('Scheduled')).toBeInTheDocument();
+    expect(within(glance).getByText('Checked in')).toBeInTheDocument();
+
     const menu = screen.getByRole('navigation', { name: 'Main' });
     expect(within(menu).getByRole('link', { name: 'Book a visit' })).toBeInTheDocument();
     // the header action is a single link styled as a button (not a button nested inside a link)

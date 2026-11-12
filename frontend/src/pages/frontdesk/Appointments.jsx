@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, CalendarPlus, CheckCheck, ReceiptText, UserX, XCircle } from 'lucide-react';
@@ -6,7 +6,7 @@ import { api } from '../../lib/api.js';
 import { addDays, fmtDate, fmtTime, istDate, istDayRange } from '../../lib/format.js';
 import { useToast } from '../../components/Toasts.jsx';
 import SlotBoard from '../../components/SlotBoard.jsx';
-import { AreaField, Button, ButtonLink, Card, Empty, ErrorNote, Modal, PageHeader, Pager, SearchBox, SelectField, StatusPill, TableSkeleton, TextField, useDebounced } from '../../components/ui.jsx';
+import { AreaField, Button, ButtonLink, Card, Empty, ErrorNote, Modal, PageHeader, Pager, SearchBox, SelectField, StatusPill, TableSkeleton, TextField, cn, useDebounced } from '../../components/ui.jsx';
 
 function CancelModal({ appt, onClose, onDone }) {
   const [reason, setReason] = useState('');
@@ -86,10 +86,64 @@ export default function Appointments() {
     onError: (e) => { toast.error(e); refresh(); },
   });
 
+  const today = istDate();
+  const todayRange = istDayRange(today);
+  const todaySummary = useQuery({
+    queryKey: ['appointments', 'today-glance', today],
+    queryFn: () => api('/appointments', { query: { ...todayRange, pageSize: 100 } }),
+    refetchInterval: 20_000,
+  });
+
+  const todayCounts = useMemo(() => {
+    const appts = todaySummary.data?.data || [];
+    const counts = { scheduled: 0, checked_in: 0, in_consultation: 0, completed: 0, cancelled: 0, no_show: 0, total: appts.length };
+    for (const a of appts) {
+      if (counts[a.status] !== undefined) counts[a.status] += 1;
+    }
+    return counts;
+  }, [todaySummary.data]);
+
   const rows = list.data?.data || [];
   return (
     <>
       <PageHeader title="Appointments" subtitle="Check patients in, move visits and keep the day running." actions={<ButtonLink to="/book"><CalendarPlus className="h-4 w-4" aria-hidden="true" />Book a visit</ButtonLink>} />
+
+      <section aria-label="Today at a glance" className="mb-6 rounded-lg border bg-surface p-3 sm:p-4">
+        <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-ink/65">Today at a glance</h2>
+          <span className="num text-xs text-ink/60">{todayCounts.total} visits today</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          {[
+            { key: 'scheduled', label: 'Scheduled', count: todayCounts.scheduled, tone: 'text-ink bg-ink/5 border-ink/15 hover:bg-ink/10' },
+            { key: 'checked_in', label: 'Checked in', count: todayCounts.checked_in, tone: 'text-mint-ink bg-mint/50 border-primary/20 hover:bg-mint/80' },
+            { key: 'in_consultation', label: 'In consult', count: todayCounts.in_consultation, tone: 'text-on-primary bg-primary border-primary hover:opacity-90' },
+            { key: 'completed', label: 'Completed', count: todayCounts.completed, tone: 'text-mint-ink bg-mint/40 border-primary/20 hover:bg-mint/60' },
+            { key: 'cancelled', label: 'Cancelled', count: todayCounts.cancelled, tone: 'text-coral-ink bg-coral/15 border-coral/30 hover:bg-coral/25' },
+            { key: 'no_show', label: 'No show', count: todayCounts.no_show, tone: 'text-coral-ink bg-coral/15 border-coral/30 hover:bg-coral/25' },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => {
+                setDate(today);
+                setAnyDate(false);
+                setStatus((prev) => (prev === item.key ? '' : item.key));
+              }}
+              title={`Filter today by ${item.label}`}
+              className={cn(
+                'flex flex-col rounded-md border p-2 text-left transition-all',
+                item.tone,
+                status === item.key && !anyDate && date === today && 'ring-2 ring-primary ring-offset-1 ring-offset-surface'
+              )}
+            >
+              <span className="text-[11px] font-medium opacity-80">{item.label}</span>
+              <span className="num mt-0.5 text-xl font-bold">{item.count}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
       <Card>
         <div className="grid gap-3 border-b p-3 sm:grid-cols-2 lg:grid-cols-[auto_auto_1fr_1fr_1.2fr]">
           <div className="flex items-end gap-1">
