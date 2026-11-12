@@ -25,3 +25,6 @@ Thumbs.db
 # Build outputs
 dist/
 build/
+
+# Frontend build output
+frontend/dist/

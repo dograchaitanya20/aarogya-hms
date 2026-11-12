@@ -65,6 +65,30 @@ npm run dev
 
 ---
 
+## Run the web app
+
+```
+npm install
+docker compose up -d
+npm run migrate
+npm run seed
+npm run dev          # API on http://localhost:5000  (keep this terminal open)
+npm run dev:web      # web app on http://localhost:5173 (second terminal)
+```
+
+Open http://localhost:5173 and use a demo account from the sign-in page (all demo accounts use the dummy password in the table below). In development, Vite proxies `/api` to the API, so the httpOnly session cookie works without any CORS setup.
+
+| Screen | Role |
+|---|---|
+| Appointments, Book a visit (live slot board), Patients, Billing | Front desk |
+| Today's queue, patient record (notes, prescriptions, reports) | Clinician |
+| Overview (reports), Directory (doctors, hours, departments, staff), Activity log | Administrator |
+
+```
+npm run build:web    # production build in frontend/dist
+npm run test:web     # 30 tests: unit + UI flows against the real API and database
+```
+
 ## Reviewer Documentation & Verification Artifacts
 
 | Document | Location | Purpose |
@@ -116,14 +140,14 @@ Routes  ──>  Controllers  ──>  Services (Business Logic)  ──>  Repos
 | Area | Status |
 |---|---|
 | Backend API: auth, RBAC, audit, patients, directory, slots, appointments, encounters, clinical records, billing, reports | Implemented, documented (`/api/docs`) and tested against a real PostgreSQL database |
-| Web UI (React) | **Not built yet.** The API is complete and explorable through Swagger UI |
+| Web UI (React 18, Vite, Tailwind) | Built: sign-in, front desk, clinician and admin screens (see **Run the web app**). Tested by driving the real UI against the real API |
 | Real payment gateway, file storage, email/SMS | Not implemented (see below) |
 
 ## Known Limitations & Assumptions
 
 These are real gaps and deliberate simplifications, not hypothetical future work.
 
-1. **No web UI yet.** Everything is exercised through the API, Swagger UI and the automated tests.
+1. **The web UI has not been through a manual cross-browser pass.** It is covered by automated UI tests (jsdom, real API and database) but was not checked on real phones or in Safari or Firefox.
 2. **Payments are a sandbox simulation.** Only three fixed test cards behave differently (`4242424242424242` succeeds; `4000000000000002` and `4000000000009995` are declined). There is no real gateway, no webhooks and **no refunds**. Only the last four card digits are ever stored.
 3. **Tax and discounts are plain amounts** supplied by the front desk (in paise). There is no GST rule engine, no tax-rate table and no discount-approval workflow.
 4. **Diagnostic reports store metadata only** (test name, category, date, file name). No file upload or object storage exists.

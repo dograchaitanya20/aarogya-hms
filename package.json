@@ -4,7 +4,8 @@
   "description": "Aarogya HMS - Hospital Management System",
   "private": true,
   "workspaces": [
-    "backend"
+    "backend",
+    "frontend"
   ],
   "scripts": {
     "dev": "npm --workspace=backend run dev",
@@ -14,7 +15,10 @@
     "test": "npm --workspace=backend run test",
     "demo:race": "npm --workspace=backend run demo:race",
     "docs:openapi": "npm --workspace=backend run docs:openapi",
-    "lint": "npm --workspace=backend run lint"
+    "lint": "npm --workspace=backend run lint",
+    "dev:web": "npm --workspace=frontend run dev",
+    "build:web": "npm --workspace=frontend run build",
+    "test:web": "npm --workspace=frontend run test"
   },
   "engines": {
     "node": ">=20.0.0"

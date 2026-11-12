@@ -69,3 +69,14 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/aarogya_hms_test
           JWT_SECRET: ci-test-secret-min-32-characters-long
         run: npm run demo:race
+
+      - name: Build the web app
+        run: npm run build:web
+
+      - name: Web UI tests (real API and database, no mocks)
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/aarogya_hms_test
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/aarogya_hms_test
+          JWT_SECRET: ci-test-secret-min-32-characters-long
+        run: npm run test:web
