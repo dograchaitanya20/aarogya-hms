@@ -132,3 +132,31 @@
 3. **Q: How is the controller -> service -> repository layering enforced?**
    - **A**: `architecture.test.js` fails the build if SQL or a database import appears in routes, controllers, services or middleware, if a secret fallback literal appears in source, or if `console.*` is used instead of the structured logger.
 
+
+
+---
+
+## Phase 4: Frontend Web Application & User Experience
+
+### 9. Module Overview: Modern React Interface, Design System & Accessibility
+- **What it does**: Provides a calm, editorial-clinical web interface for Front Desk, Clinicians, and Administrators built with React 18, Vite, Tailwind CSS, Framer Motion, and TanStack Query. Features live slot boards, keyboard accessibility, print receipt stylesheets, and status overview strips.
+- **Key files**:
+  - `frontend/src/App.jsx`: Route architecture with `RequireAuth` and `RequireRole` route guards.
+  - `frontend/src/lib/api.js`: Fetch client handling `httpOnly` cookie authentication, automatic `Idempotency-Key` generation, and standardized error parsing.
+  - `frontend/src/components/SlotBoard.jsx`: Interactive time rail displaying open, booked, and conflicting slots with keyboard support and accessibility tags.
+  - `frontend/src/pages/Billing.jsx`: Invoice generation, simulated card terminal, and print receipt drawer.
+  - `frontend/src/pages/Appointments.jsx`: Appointments table with live "Today at a glance" status count strip.
+  - `frontend/src/components/Illustrations.jsx`: Bespoke, handcrafted inline SVG illustrations for empty search and list states.
+
+#### Likely Reviewer Questions & Answers
+1. **Q: Why are UI role guards (`RequireRole`) not considered security?**
+   - **A**: UI role guards are strictly a UX convenience to prevent user confusion, not a security boundary. Any user with browser developer tools or a tool like `curl` can inspect client JavaScript, manipulate state, or bypass frontend routing entirely. True security and authorization must be enforced server-side on every protected API route (`requireRole(...)` middleware). In Aarogya HMS, every API request verifies the signed JWT from the `httpOnly` cookie against the database, rejects unauthorized attempts with `403 FORBIDDEN`, and emits an immutable record in the append-only `audit_log`.
+2. **Q: How does the UI handle a double-booking race condition when two staff members pick the same slot?**
+   - **A**: If two users attempt to book the same slot at the same time, both requests reach the backend where PostgreSQL's `btree_gist` exclusion constraint atomically accepts one and aborts the other with SQLSTATE `23P01` (mapped to HTTP `409 SLOT_TAKEN`). When the losing client receives `409 SLOT_TAKEN`:
+     - The UI catches the error code without crashing.
+     - Framer Motion animates a horizontal shake on the contested slot cell.
+     - The cell is highlighted with a coral warning ring and marked as "just taken".
+     - The slot button is immediately disabled (`disabled={isConflict}`) to prevent further attempts.
+     - TanStack Query automatically triggers a background refetch of open slots for that doctor and day, ensuring the board reflects real-time hospital capacity.
+3. **Q: Why do the frontend automated tests drive the real Express API and PostgreSQL database rather than mocking `fetch` or MSW?**
+   - **A**: Mocking network requests (`fetch` mocks or Mock Service Worker) frequently masks critical bugs: subtle HTTP status code mismatches, Zod validation serialization discrepancies, database transaction rollbacks, unique constraint violations, cookie header behaviors, and query race conditions. By spinning up a real Express server on an ephemeral port against an isolated PostgreSQL test database (`aarogya_hms_test`), the 32 frontend tests verify that the real frontend code and real backend database constraints work together seamlessly in end-to-end reality.

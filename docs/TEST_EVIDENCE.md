@@ -8,24 +8,27 @@ Everything below is raw output captured from a **clean-slate run**: both databas
 
 | | |
 |---|---|
-| Test files | 10 |
-| Tests | 156 |
-| Passed | 156 |
+| Test files | 10 backend + 3 frontend (13 total) |
+| Tests | 188 total (156 backend + 32 frontend) |
+| Passed | 188 |
 | Failed | 0 |
 | Database | real PostgreSQL, isolated `aarogya_hms_test`; the database layer is never mocked |
 
 | File | Tests | Passed |
 |---|---|---|
-| `architecture.test.js` | 4 | 4 |
-| `auth.test.js` | 10 | 10 |
-| `db.test.js` | 6 | 6 |
-| `openapi-coverage.test.js` | 5 | 5 |
-| `phase2-fixes.test.js` | 33 | 33 |
-| `phase2.test.js` | 13 | 13 |
-| `phase3-clinical-billing.test.js` | 54 | 54 |
-| `rbac.test.js` | 19 | 19 |
-| `security-isolation.test.js` | 7 | 7 |
-| `timezone.test.js` | 5 | 5 |
+| `backend: architecture.test.js` | 4 | 4 |
+| `backend: auth.test.js` | 10 | 10 |
+| `backend: db.test.js` | 6 | 6 |
+| `backend: openapi-coverage.test.js` | 5 | 5 |
+| `backend: phase2-fixes.test.js` | 33 | 33 |
+| `backend: phase2.test.js` | 13 | 13 |
+| `backend: phase3-clinical-billing.test.js` | 54 | 54 |
+| `backend: rbac.test.js` | 19 | 19 |
+| `backend: security-isolation.test.js` | 7 | 7 |
+| `backend: timezone.test.js` | 5 | 5 |
+| `frontend: tests/api.test.js` | 9 | 9 |
+| `frontend: tests/format.test.js` | 9 | 9 |
+| `frontend: tests/e2e.test.jsx` | 14 | 14 |
 
 Some tests deliberately make one dependency fail (for example the audit write) with `vi.spyOn` to prove a transaction rolls back. That is fault injection on top of the real database, not a substitute for it.
 
@@ -335,3 +338,164 @@ A review of the suite found tests that could not fail, and they were replaced ra
 - Timezone Utility (Hospital TZ: Asia/Kolkata = UTC+05:30) verifies HOSPITAL_TZ is set to Asia/Kolkata
 
 </details>
+
+
+---
+
+## 8. Frontend Web Test Suite (`npm run test:web`, 32 passed)
+
+Executed with Vitest, React Testing Library, and jsdom, driving the real browser application components against the real Express backend API and PostgreSQL test database:
+
+```text
+> aarogya-hms@1.0.0 test:web
+> npm --workspace=frontend run test
+
+> aarogya-hms-frontend@1.0.0 test
+> vitest run
+
+ RUN  v3.2.7 C:/Users/ASUS/Downloads/aarogya-hms/frontend
+
+[Test Setup] Ensuring test database is migrated and seeded...
+[Migrate] Database is already up to date. No new migrations.
+[Seed] Starting idempotent synthetic data seed...
+[Seed] Seeding 60 appointments...
+[Seed] Database seed completed successfully!
+[Test Setup] Test database ready.
+[Frontend tests] real API listening on :54944
+ ✓ tests/api.test.js (9 tests) 16ms
+ ✓ tests/format.test.js (9 tests) 8ms
+ ✓ tests/e2e.test.jsx (14 tests) 1840ms
+
+ Test Files  3 passed (3)
+      Tests  32 passed (32)
+   Start at  18:42:11
+   Duration  3.59s (transform 392ms, setup 662ms, collect 496ms, tests 1.87s, environment 746ms, prepare 240ms)
+
+> aarogya-hms@1.0.0 posttest:web
+> node scripts/posttest.cjs
+
+[Frontend test teardown] Backend server stopped cleanly.
+[Frontend test teardown] Teardown complete.
+```
+
+### Frontend Tests Breakdown
+- **`tests/api.test.js`** (9 tests):
+  - API client error extraction and validation error handling
+  - Automatic `Idempotency-Key` header injection per request attempt
+  - Error explanation formatting for UI toast notifications
+  - Non-JSON error body fallback (502/504 gateways)
+  - 401 unauthenticated redirect handling
+  - 403 permission denied formatting
+- **`tests/format.test.js`** (9 tests):
+  - Integer paise to Indian Rupee currency formatting (`rupees(125000)` -> `₹1,250.00`)
+  - User text input parsing to integer paise (`rupeesToPaise("1250.50")` -> `125050`)
+  - Fractional paise and non-numeric validation rejection
+  - Hospital timezone (`Asia/Kolkata`) date, time, and datetime formatting
+  - Local hospital day range ISO boundary generation (`istDayRange`)
+  - Patient age calculation from birth date
+- **`tests/e2e.test.jsx`** (14 tests):
+  - Sign in and access control: demo account login, cookie session, role redirect, demo system notice
+  - Wrong credentials handling: inline error alert, no redirect
+  - Booking board: choose doctor, hospital day, live open slot, select patient, book visit -> slot dynamically updates to booked
+  - Booking board concurrency conflict: rival books slot concurrently -> UI catches 409 `SLOT_TAKEN`, displays conflict alert, marks slot cell as "just taken", disables re-selection, and books nothing
+  - Keyboard accessibility: navigate and select slot cell via Tab + Enter/Space keys
+  - Billing: create invoice, simulate declined card attempt, complete successful payment, reconcile totals to `paid` status
+  - Overpayment prevention: UI rejects payment amount exceeding remaining invoice balance with clear feedback
+  - Print receipt: print button and print stylesheet availability on invoice drawer
+  - Clinician consultation queue: start visit from queue, record diagnosis note and prescription items, complete consultation, verify encounter records match and admin cannot view clinical note text
+  - Administrator overview: query and filter append-only activity log by action type
+  - Administrator directory: add staff account via modal, verify created account in list, confirm password hashes are never exposed
+  - Empty search state: verify custom SVG illustration renders when patient query yields no results
+
+---
+
+## 9. Frontend Production Build (`npm run build:web`, exit code 0)
+
+```text
+> aarogya-hms@1.0.0 build:web
+> npm --workspace=frontend run build
+
+> aarogya-hms-frontend@1.0.0 build
+> vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 2004 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                       0.99 kB │ gzip:   0.56 kB
+dist/assets/plus-jakarta-sans-vietnamese-400-normal-Cg2kxhWu.woff2    4.10 kB
+dist/assets/plus-jakarta-sans-vietnamese-600-normal-Y4VTTRme.woff2    4.20 kB
+dist/assets/jetbrains-mono-greek-400-normal-C190GLew.woff2            4.23 kB
+dist/assets/plus-jakarta-sans-vietnamese-700-normal-CV6qDkkj.woff2    4.27 kB
+dist/assets/plus-jakarta-sans-vietnamese-500-normal-DiU8zqi-.woff2    4.28 kB
+dist/assets/jetbrains-mono-greek-500-normal-JpySY46c.woff2            4.28 kB
+dist/assets/jetbrains-mono-cyrillic-400-normal-BEIGL1Tu.woff2         5.33 kB
+dist/assets/jetbrains-mono-cyrillic-500-normal-DmUKJPL_.woff2         5.36 kB
+dist/assets/jetbrains-mono-vietnamese-400-normal-CqNFfHCs.woff        5.37 kB
+dist/assets/jetbrains-mono-vietnamese-500-normal-DNRqzVM1.woff        5.48 kB
+dist/assets/plus-jakarta-sans-vietnamese-400-normal-B8TCSmUq.woff     5.60 kB
+dist/assets/jetbrains-mono-greek-400-normal-B9oWc5Lo.woff             5.66 kB
+dist/assets/jetbrains-mono-greek-500-normal-D7SFKleX.woff             5.72 kB
+dist/assets/plus-jakarta-sans-vietnamese-600-normal-5YsyKbU1.woff     5.74 kB
+dist/assets/plus-jakarta-sans-vietnamese-700-normal-BCh_uG_5.woff     5.78 kB
+dist/assets/plus-jakarta-sans-vietnamese-500-normal-CvE5C8T-.woff     5.79 kB
+dist/assets/fraunces-vietnamese-400-normal-CvGt0Ybw.woff2             6.21 kB
+dist/assets/fraunces-vietnamese-600-normal-BjlAJixd.woff2             6.28 kB
+dist/assets/jetbrains-mono-cyrillic-400-normal-ugxPyKxw.woff          6.98 kB
+dist/assets/jetbrains-mono-cyrillic-500-normal-DJqRU3vO.woff          7.02 kB
+dist/assets/jetbrains-mono-latin-ext-400-normal-Bc8Ftmh3.woff2        7.34 kB
+dist/assets/jetbrains-mono-latin-ext-500-normal-Cut-4mMH.woff2        7.53 kB
+dist/assets/fraunces-vietnamese-600-normal-DlAl5EAR.woff              7.93 kB
+dist/assets/fraunces-vietnamese-400-normal-B65MOf9T.woff              7.98 kB
+dist/assets/jetbrains-mono-latin-ext-400-normal-fXTG6kC5.woff        10.13 kB
+dist/assets/jetbrains-mono-latin-ext-500-normal-ckzbgY84.woff        10.34 kB
+dist/assets/plus-jakarta-sans-latin-ext-400-normal-D127hM_v.woff2    10.59 kB
+dist/assets/plus-jakarta-sans-latin-ext-500-normal-9VZagAe1.woff2    10.86 kB
+dist/assets/plus-jakarta-sans-latin-ext-600-normal-DQgPU_Cg.woff2    10.90 kB
+dist/assets/plus-jakarta-sans-latin-ext-700-normal-BajbvANd.woff2    11.01 kB
+dist/assets/plus-jakarta-sans-latin-400-normal-Dhut76fR.woff2        11.82 kB
+dist/assets/plus-jakarta-sans-latin-600-normal-DLTa1BUW.woff2        12.19 kB
+dist/assets/plus-jakarta-sans-latin-700-normal-CfpNZvy6.woff2        12.24 kB
+dist/assets/plus-jakarta-sans-latin-500-normal-Bf-nb4oT.woff2        12.31 kB
+dist/assets/plus-jakarta-sans-latin-ext-400-normal-2ppkqaOR.woff     15.31 kB
+dist/assets/plus-jakarta-sans-latin-ext-600-normal-B0WRRYJ1.woff     15.61 kB
+dist/assets/plus-jakarta-sans-latin-ext-700-normal-8-d-IyIQ.woff     15.62 kB
+dist/assets/plus-jakarta-sans-latin-ext-500-normal-CqEEAICU.woff     15.62 kB
+dist/assets/plus-jakarta-sans-latin-400-normal-BDKaGhyp.woff         15.73 kB
+dist/assets/plus-jakarta-sans-latin-600-normal-BR_Ojra4.woff         16.08 kB
+dist/assets/plus-jakarta-sans-latin-500-normal-DYtqi0QS.woff         16.12 kB
+dist/assets/plus-jakarta-sans-latin-700-normal-DqEcQeE5.woff         16.14 kB
+dist/assets/fraunces-latin-ext-400-normal-D8gbi3Gu.woff2             17.29 kB
+dist/assets/fraunces-latin-ext-600-normal-BtzmzP0X.woff2             17.34 kB
+dist/assets/fraunces-latin-400-normal-6IfK1voy.woff2                 17.97 kB
+dist/assets/fraunces-latin-600-normal-BFCDtZfi.woff2                 18.10 kB
+dist/assets/jetbrains-mono-latin-400-normal-V6pRDFza.woff2           21.17 kB
+dist/assets/jetbrains-mono-latin-500-normal-BWZEU5yA.woff2           21.83 kB
+dist/assets/fraunces-latin-ext-600-normal-B0Dy4lqi.woff              22.36 kB
+dist/assets/fraunces-latin-ext-400-normal-UihxqfOe.woff              22.37 kB
+dist/assets/fraunces-latin-400-normal-NUPT2cO8.woff                  22.48 kB
+dist/assets/fraunces-latin-600-normal-DL5QCzvS.woff                  22.51 kB
+dist/assets/jetbrains-mono-latin-400-normal-6-qcROiO.woff            27.50 kB
+dist/assets/jetbrains-mono-latin-500-normal-CJOVTJB7.woff            28.21 kB
+dist/assets/index-DPSOTwsn.css                                       71.88 kB │ gzip:  29.74 kB
+dist/assets/plus-BaEoYKGh.js                                          0.32 kB │ gzip:   0.25 kB
+dist/assets/user-plus-DQGK9_KQ.js                                     0.48 kB │ gzip:   0.33 kB
+dist/assets/trash-2-Bt339Rvj.js                                       0.53 kB │ gzip:   0.34 kB
+dist/assets/calendar-clock-tM8cjQYT.js                                0.55 kB │ gzip:   0.36 kB
+dist/assets/PatientPicker-BrG3amy_.js                                 2.17 kB │ gzip:   0.91 kB
+dist/assets/useMutation-ClBYq-b3.js                                   3.17 kB │ gzip:   1.28 kB
+dist/assets/Booking-D56VoQCl.js                                       5.36 kB │ gzip:   2.31 kB
+dist/assets/SlotBoard-Ch_W-l4n.js                                     5.56 kB │ gzip:   2.47 kB
+dist/assets/Queue-CzIjiOQi.js                                         5.56 kB │ gzip:   2.12 kB
+dist/assets/Dashboard-ci1d4cim.js                                     6.24 kB │ gzip:   2.17 kB
+dist/assets/Activity-C6k6JLew.js                                      6.81 kB │ gzip:   2.40 kB
+dist/assets/Patients-DlEvsUY8.js                                      7.34 kB │ gzip:   2.91 kB
+dist/assets/useQuery-BWI6P8aO.js                                      9.50 kB │ gzip:   3.38 kB
+dist/assets/Appointments-Bo-ru7fq.js                                 11.36 kB │ gzip:   3.84 kB
+dist/assets/PatientRecord-BJoRMsGV.js                                11.73 kB │ gzip:   3.91 kB
+dist/assets/Directory-Bw56v43T.js                                    16.89 kB │ gzip:   4.61 kB
+dist/assets/Billing-C_2CwBDU.js                                      18.27 kB │ gzip:   5.71 kB
+dist/assets/index-Ddaxdn-n.js                                       356.63 kB │ gzip: 113.90 kB
+✓ built in 6.05s
+```

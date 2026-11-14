@@ -157,3 +157,57 @@ The authoritative list lives in the README (**Known Limitations & Assumptions**)
 - Built with Antigravity AI pair programming agent.
 - Code conforms to human-explainable, clean ES module patterns with zero hidden dependencies.
 - Third-party packages: Express, pg, bcrypt, jsonwebtoken, zod, helmet, cors, express-rate-limit, pino, swagger-ui-express, yaml, vitest, supertest.
+
+
+---
+
+## 11. Frontend Architecture & Implementation
+
+### 1. Technology Stack
+- **Framework & Runtime**: React 18 with Vite build tool. Fast HMR and lightweight ES module bundling.
+- **Styling & Design System**: Tailwind CSS configured with Aarogya design tokens:
+  - Background Paper: `#F7F5F0`
+  - Ink (Text): `#0F1F1C`
+  - Primary Deep Teal: `#0E5C5A`
+  - Accent Coral: `#F26B50`
+  - Mint: `#DDEFE9`
+  - Fonts: Fraunces (editorial headings), Plus Jakarta Sans (interface typography), JetBrains Mono (IDs, money, times) imported locally via `@fontsource` with zero external CDN dependencies.
+  - Full dark mode support using CSS variables and semantic theme classes.
+- **Animation & Transitions**: Framer Motion for layout transitions, drawer slide-overs, animated presence, and slot shake animations, respecting `prefers-reduced-motion`.
+- **State Management & Caching**: TanStack Query v5 (`@tanstack/react-query`) with automatic background refetching, cache invalidation, and query deduplication.
+- **Routing & Navigation**: React Router v6 with declarative role-aware route guards (`RequireAuth`, `RequireRole`).
+
+### 2. Authentication: httpOnly Cookie & Vite Proxy
+- Sessions rely on secure, browser-managed `httpOnly` cookies (`aarogya_token`).
+- In development, Vite is configured with a reverse proxy (`/api` -> `http://localhost:5000/api`) in `frontend/vite.config.js`. This ensures the web application and API share the exact same origin from the browser's perspective, completely eliminating cross-origin cookie restrictions and complex CORS configurations without exposing credentials in JavaScript `localStorage`.
+
+### 3. Idempotency Key Injection Per User Attempt
+- State-changing POST operations (such as appointment bookings and invoice payments) automatically generate a unique v4 UUID `Idempotency-Key` header per distinct user attempt:
+  ```js
+  headers['Idempotency-Key'] = crypto.randomUUID();
+  ```
+- If a network failure occurs, the same key can be replayed safely; if the user modifies form fields and submits again, a new key is generated, ensuring that accidental double-clicks never create duplicate appointments or double-charge invoices.
+
+### 4. Slot Board Concurrency & Conflict Handling
+- The signature `SlotBoard` component (`frontend/src/components/SlotBoard.jsx`) displays doctor availability divided into 15-minute slot intervals by hour rail.
+- **Conflict Handling**: When multiple users attempt to book the same slot simultaneously, the winner's transaction succeeds, while the colliding attempt receives HTTP `409 SLOT_TAKEN`.
+- The frontend catches `SLOT_TAKEN`:
+  1. Visually shakes the contested cell using Framer Motion (`animate={{ x: [0, -5, 5, -3, 3, 0] }}`).
+  2. Flags the slot as "just taken" with a coral ring indicator.
+  3. Immediately disables the button (`disabled={isConflict}`) so it cannot be selected again.
+  4. Automatically refetches live slot data (`refetchQueries(['open-slots'])`).
+  5. Displays a clear error banner explaining that the slot was reserved moments ago.
+
+### 5. Accessibility (a11y) & Receipt Printing
+- **Semantic HTML & Screen Reader Support**:
+  - The slot board wraps time intervals in a container with `role="region"` and `aria-label="Available time slots"`.
+  - Hour labels are formatted clearly ("9 am", "10 am") with `whitespace-nowrap` to prevent awkward multiline wrapping across mobile screens.
+  - Buttons include explicit `aria-label`, `aria-pressed`, and full keyboard navigation (Tab to focus, Enter or Space to select).
+- **Print Stylesheet for Receipts**:
+  - The billing drawer incorporates a dedicated "Print receipt" action utilizing native CSS `@media print` rules without adding heavy third-party PDF dependencies.
+  - When printing, interactive chrome (navbars, buttons, drawers, close icons) is cleanly suppressed, and the invoice itemization, totals, and payment reconciliation are rendered in a high-contrast, black-and-white print receipt layout.
+
+### 6. Automated Testing Against the Real API and Database
+- Frontend tests (`tests/e2e.test.jsx`, `tests/api.test.js`, `tests/format.test.js`) execute using Vitest and React Testing Library in a jsdom environment.
+- **Zero Mocking of the Backend**: The test harness launches a real Express server listening on an ephemeral port connected to the isolated `aarogya_hms_test` PostgreSQL database.
+- End-to-end user journeys test the full authentication lifecycle, booking slot collisions, keyboard navigation, invoice creation, card decline resilience, overpayment rejection, receipt printing, and clinician queue progression against live database transactions.
