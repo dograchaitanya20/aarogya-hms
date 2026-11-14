@@ -22,6 +22,12 @@ function to12h(hhmmStr) {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${suffix}`;
 }
 
+function formatHour(hour) {
+  const h = Number(hour);
+  const suffix = h >= 12 ? 'pm' : 'am';
+  return `${h % 12 || 12} ${suffix}`;
+}
+
 function buildCells(rules, date) {
   const cells = [];
   for (const rule of rules) {
@@ -98,11 +104,14 @@ export default function SlotBoard({ doctorId, date, selected, onSelect, conflict
         </ul>
       </div>
 
-      <ol className="divide-y rounded-lg border bg-surface" role="region" aria-label="Available time slots">
-        {hours.map(([hour, cells]) => (
-          <li key={hour} className="grid grid-cols-[3.75rem_1fr] sm:grid-cols-[4.5rem_1fr] items-stretch">
-            <span className="num flex items-center border-r px-2 py-2.5 sm:px-3 sm:py-3 text-xs text-ink/55">{to12h(`${hour}:00`)}</span>
-            <div className="flex flex-wrap gap-2 p-1.5 sm:p-2">
+      <div role="region" aria-label="Available time slots">
+        <ol className="divide-y rounded-lg border bg-surface">
+          {hours.map(([hour, cells]) => (
+            <li key={hour} className="grid grid-cols-[3.75rem_1fr] sm:grid-cols-[4.5rem_1fr] items-stretch">
+              <span className="num flex items-center justify-center border-r px-2 py-2.5 sm:px-3 sm:py-3 text-xs text-ink/55 whitespace-nowrap">
+                {formatHour(hour)}
+              </span>
+              <div className="flex flex-wrap gap-2 p-1.5 sm:p-2">
               {cells.map((c) => {
                 const isSelected = selected === c.startsAt;
                 const isConflict = conflictAt === c.startsAt;
@@ -144,6 +153,7 @@ export default function SlotBoard({ doctorId, date, selected, onSelect, conflict
           </li>
         ))}
       </ol>
+      </div>
     </div>
   );
 }
