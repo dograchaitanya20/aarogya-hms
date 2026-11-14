@@ -28,7 +28,7 @@ npm install
 npm run migrate
 npm run seed
 
-# 5. Run All Real Database Automated Tests (Isolated Test Database)
+# 5. Run All Real Database Automated Tests (Isolated Test Database — 156 passed)
 npm test
 
 # 6. Run the Live Race Condition Double-Booking Demo
@@ -53,7 +53,7 @@ npm install
 npm run migrate
 npm run seed
 
-:: 5. Run Real Database Automated Tests
+:: 5. Run Real Database Automated Tests (156 passed)
 npm test
 
 :: 6. Run the Live Race Condition Double-Booking Demo
@@ -86,8 +86,34 @@ Open http://localhost:5173 and use a demo account from the sign-in page (all dem
 
 ```
 npm run build:web    # production build in frontend/dist
-npm run test:web     # 30 tests: unit + UI flows against the real API and database
+npm run test:web     # 32 tests: unit + UI flows against the real API and database
+npm test             # 156 tests: backend unit, integration, and security suites
 ```
+
+### Automated Test Coverage
+- **Backend**: **156 passed** across 10 test suites testing against real PostgreSQL: RBAC matrix per endpoint, advisory locks, exclusion constraints, append-only audit trigger, timezone calculations, and concurrency races.
+- **Frontend**: **32 passed** across 3 test suites driving UI flows against the live Express API and real database: authentication, slot board keyboard selection, double-booking conflict alert & disable, billing reconciliation, overpayment prevention, and clinician queue.
+
+## Screenshots
+
+| Sign-in Screen | Booking Slot Board |
+| :---: | :---: |
+| ![Sign-in](docs/screenshots/sign-in.png) | ![Booking Slot Board](docs/screenshots/booking.png) |
+
+| Appointments & Glance Strip | Clinician Patient Record |
+| :---: | :---: |
+| ![Appointments](docs/screenshots/appointments.png) | ![Clinician Patient Record](docs/screenshots/clinician-record.png) |
+
+| Admin Dashboard & Overview | Billing & Invoice Drawer |
+| :---: | :---: |
+| ![Admin Overview](docs/screenshots/admin-overview.png) | ![Billing Drawer](docs/screenshots/billing-drawer.png) |
+
+### Visual QA Automation
+Automated screenshot capture across viewports (360px, 768px, 1280px) and color themes:
+```powershell
+node scripts/visual-qa.cjs
+```
+> **Note on Chrome Path**: The visual QA script uses the `CHROME_PATH` environment variable, defaulting to `C:\Program Files\Google\Chrome\Application\chrome.exe`. If Google Chrome is installed at another location, specify `$env:CHROME_PATH = "C:\Path\To\chrome.exe"` before running.
 
 ## Reviewer Documentation & Verification Artifacts
 

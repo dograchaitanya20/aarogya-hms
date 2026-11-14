@@ -29,4 +29,5 @@ build/
 # Frontend build output
 frontend/dist/
 
-screenshots/
+/screenshots/
+!docs/screenshots/
