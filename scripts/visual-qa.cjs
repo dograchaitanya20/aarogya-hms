@@ -4,7 +4,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 
-const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const CHROME_PATH = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const OUT_DIR = path.join(__dirname, '..', 'screenshots');
 
 if (!fs.existsSync(OUT_DIR)) {
